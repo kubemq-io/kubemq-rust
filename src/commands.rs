@@ -9,16 +9,29 @@ use crate::proto::kubemq as proto;
 use crate::subscription::Subscription;
 use crate::validate;
 
-/// Outbound command request.
+/// Outbound command request for the RPC (Command/Query) pattern.
+///
+/// Commands are point-to-point: the sender blocks until exactly one subscriber
+/// executes the command and returns a [`CommandResponse`], or the timeout expires.
+///
+/// Use [`Command::builder()`] to construct instances.
 #[derive(Debug, Clone)]
 pub struct Command {
+    /// Unique request identifier. Auto-generated (UUID v4) when empty.
     pub id: String,
+    /// Target channel name. Required; must not contain wildcards.
     pub channel: String,
+    /// Optional UTF-8 metadata string (e.g., command name, correlation ID).
     pub metadata: String,
+    /// Command payload bytes.
     pub body: Vec<u8>,
+    /// Maximum time to wait for a response. Defaults to 5 seconds.
     pub timeout: Duration,
+    /// Sender identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Arbitrary key-value pairs attached to the command. Keys and values must be non-empty.
     pub tags: HashMap<String, String>,
+    /// OpenTelemetry span context for distributed tracing. Usually left empty.
     pub span: Vec<u8>,
 }
 
@@ -29,12 +42,28 @@ impl Command {
     }
 }
 
-/// Builder for creating commands.
+/// Builder for constructing [`Command`] instances using a fluent API.
+///
+/// All fields are optional. `channel` and `timeout` are required at send time.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::prelude::*;
+/// use std::time::Duration;
+///
+/// let cmd = Command::builder()
+///     .channel("device.reboot")
+///     .body(b"device-42".to_vec())
+///     .timeout(Duration::from_secs(10))
+///     .build();
+/// ```
 pub struct CommandBuilder {
     cmd: Command,
 }
 
 impl CommandBuilder {
+    /// Create a new builder with all fields set to their defaults (5s timeout).
     pub fn new() -> Self {
         Self {
             cmd: Command {
@@ -50,46 +79,55 @@ impl CommandBuilder {
         }
     }
 
+    /// Set the request ID. If omitted, a UUID v4 is generated at send time.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.cmd.id = id.into();
         self
     }
 
+    /// Set the target channel name (required).
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         self.cmd.channel = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata (e.g., command name, correlation ID).
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.cmd.metadata = metadata.into();
         self
     }
 
+    /// Set the command payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.cmd.body = body.into();
         self
     }
 
+    /// Set the maximum time to wait for a response. Must be > 0.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.cmd.timeout = timeout;
         self
     }
 
+    /// Override the client-level `client_id` for this request.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.cmd.client_id = client_id.into();
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.cmd.tags = tags;
         self
     }
 
+    /// Add a single key-value tag. Both key and value must be non-empty.
     pub fn add_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.cmd.tags.insert(key.into(), value.into());
         self
     }
 
+    /// Consume the builder and return the constructed [`Command`].
     pub fn build(self) -> Command {
         self.cmd
     }
@@ -101,27 +139,49 @@ impl Default for CommandBuilder {
     }
 }
 
-/// Received command request from subscription.
+/// A command received from a subscription callback.
+///
+/// Delivered to the `on_command` closure passed to
+/// [`KubemqClient::subscribe_to_commands()`]. The handler should process
+/// the command and send a [`CommandReply`] via
+/// [`KubemqClient::send_command_response()`].
 #[derive(Debug, Clone)]
 pub struct CommandReceive {
+    /// Request identifier — use this as `request_id` in the reply.
     pub id: String,
+    /// Identity of the sender.
     pub client_id: String,
+    /// The channel this command was sent to.
     pub channel: String,
+    /// UTF-8 metadata attached by the sender.
     pub metadata: String,
+    /// Command payload bytes.
     pub body: Vec<u8>,
+    /// Reply channel — use this as `response_to` in the reply.
     pub response_to: String,
+    /// Key-value tags attached by the sender.
     pub tags: HashMap<String, String>,
+    /// OpenTelemetry span context for distributed tracing.
     pub span: Vec<u8>,
 }
 
-/// Result of sending a command (response from subscriber).
+/// Response received after sending a command via [`KubemqClient::send_command()`].
+///
+/// Use [`into_result()`](Self::into_result) to convert into a standard
+/// `Result`, which returns `Err` when `executed` is `false`.
 #[derive(Debug, Clone)]
 pub struct CommandResponse {
+    /// Identifier of the original command request.
     pub command_id: String,
+    /// Identity of the subscriber that handled the command.
     pub response_client_id: String,
+    /// `true` if the subscriber reported successful execution.
     pub executed: bool,
+    /// Server timestamp (Unix nanoseconds) when the response was created.
     pub executed_at: i64,
+    /// Error message from the subscriber when `executed` is `false`.
     pub error: String,
+    /// Key-value tags attached by the subscriber.
     pub tags: HashMap<String, String>,
 }
 
@@ -150,17 +210,30 @@ impl CommandResponse {
     }
 }
 
-/// Outbound command reply (sent by subscriber).
+/// Outbound command reply sent by a subscriber via
+/// [`KubemqClient::send_command_response()`].
+///
+/// Copy `id` and `response_to` from the received [`CommandReceive`].
+/// If `error` is `None`, the command is marked as executed successfully.
 #[derive(Debug, Clone)]
 pub struct CommandReply {
+    /// Must match [`CommandReceive::id`] of the incoming command.
     pub request_id: String,
+    /// Must match [`CommandReceive::response_to`] of the incoming command.
     pub response_to: String,
+    /// Optional UTF-8 metadata to include in the reply.
     pub metadata: String,
+    /// Optional response payload bytes.
     pub body: Vec<u8>,
+    /// Responder identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Timestamp indicating when the command was executed.
     pub executed_at: i64,
+    /// Set to `Some(message)` to report a failure; `None` means success.
     pub error: Option<String>,
+    /// Arbitrary key-value pairs to attach to the reply.
     pub tags: HashMap<String, String>,
+    /// OpenTelemetry span context for distributed tracing.
     pub span: Vec<u8>,
 }
 
@@ -171,12 +244,16 @@ impl CommandReply {
     }
 }
 
-/// Builder for creating command replies.
+/// Builder for constructing [`CommandReply`] instances using a fluent API.
+///
+/// `request_id` and `response_to` are required and must match the values
+/// from the received [`CommandReceive`].
 pub struct CommandReplyBuilder {
     reply: CommandReply,
 }
 
 impl CommandReplyBuilder {
+    /// Create a new builder with all fields set to their defaults.
     pub fn new() -> Self {
         Self {
             reply: CommandReply {
@@ -193,46 +270,55 @@ impl CommandReplyBuilder {
         }
     }
 
+    /// Set the request ID (required). Must match [`CommandReceive::id`].
     pub fn request_id(mut self, id: impl Into<String>) -> Self {
         self.reply.request_id = id.into();
         self
     }
 
+    /// Set the reply channel (required). Must match [`CommandReceive::response_to`].
     pub fn response_to(mut self, channel: impl Into<String>) -> Self {
         self.reply.response_to = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata to include in the reply.
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.reply.metadata = metadata.into();
         self
     }
 
+    /// Set optional response payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.reply.body = body.into();
         self
     }
 
+    /// Override the client-level `client_id` for this reply.
     pub fn client_id(mut self, id: impl Into<String>) -> Self {
         self.reply.client_id = id.into();
         self
     }
 
+    /// Set the execution timestamp.
     pub fn executed_at(mut self, time: i64) -> Self {
         self.reply.executed_at = time;
         self
     }
 
+    /// Report an error. Setting this marks the command as not executed.
     pub fn error(mut self, err: impl Into<String>) -> Self {
         self.reply.error = Some(err.into());
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.reply.tags = tags;
         self
     }
 
+    /// Consume the builder and return the constructed [`CommandReply`].
     pub fn build(self) -> CommandReply {
         self.reply
     }
