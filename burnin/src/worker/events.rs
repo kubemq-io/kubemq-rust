@@ -90,6 +90,8 @@ impl EventsProducer {
             }
         }
 
+        // Drain: brief wait for in-flight messages before closing stream
+        tokio::time::sleep(Duration::from_secs(2)).await;
         handle.close();
     }
 

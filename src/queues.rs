@@ -7,16 +7,31 @@ use crate::error::{ErrorCode, KubemqError};
 use crate::proto::kubemq as proto;
 use crate::validate;
 
-/// Outbound queue message.
+/// A message for the Queue (point-to-point) messaging pattern.
+///
+/// Queue messages are persisted and delivered to exactly one consumer.
+/// They support delivery policies (expiration, delay, dead-letter) via
+/// [`QueuePolicy`] and carry server-assigned [`QueueMessageAttributes`]
+/// when received.
+///
+/// Use [`QueueMessage::builder()`] to construct instances for sending.
 #[derive(Debug, Clone)]
 pub struct QueueMessage {
+    /// Unique message identifier. Auto-generated (UUID v4) when empty.
     pub id: String,
+    /// Sender identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Target queue channel name. Required; must not contain wildcards.
     pub channel: String,
+    /// Optional UTF-8 metadata string (e.g., content type).
     pub metadata: String,
+    /// Message payload bytes.
     pub body: Vec<u8>,
+    /// Arbitrary key-value pairs attached to the message. Keys and values must be non-empty.
     pub tags: HashMap<String, String>,
+    /// Optional delivery policy (expiration, delay, dead-letter routing).
     pub policy: Option<QueuePolicy>,
+    /// Server-assigned attributes. Present only on received messages; `None` when sending.
     pub attributes: Option<QueueMessageAttributes>,
 }
 
@@ -27,12 +42,29 @@ impl QueueMessage {
     }
 }
 
-/// Builder for creating queue messages.
+/// Builder for constructing [`QueueMessage`] instances using a fluent API.
+///
+/// All fields are optional. `channel` is required at send time.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::prelude::*;
+///
+/// let msg = QueueMessage::builder()
+///     .channel("tasks")
+///     .body(b"process-order-42".to_vec())
+///     .expiration_seconds(300)
+///     .max_receive_count(3)
+///     .max_receive_queue("tasks.dead-letter")
+///     .build();
+/// ```
 pub struct QueueMessageBuilder {
     msg: QueueMessage,
 }
 
 impl QueueMessageBuilder {
+    /// Create a new builder with all fields set to their defaults.
     pub fn new() -> Self {
         Self {
             msg: QueueMessage {
@@ -48,70 +80,86 @@ impl QueueMessageBuilder {
         }
     }
 
+    /// Set the message ID. If omitted, a UUID v4 is generated at send time.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.msg.id = id.into();
         self
     }
 
+    /// Set the target queue channel name (required).
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         self.msg.channel = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata (e.g., content type).
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.msg.metadata = metadata.into();
         self
     }
 
+    /// Set the message payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.msg.body = body.into();
         self
     }
 
+    /// Override the client-level `client_id` for this message.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.msg.client_id = client_id.into();
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.msg.tags = tags;
         self
     }
 
+    /// Add a single key-value tag. Both key and value must be non-empty.
     pub fn add_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.msg.tags.insert(key.into(), value.into());
         self
     }
 
+    /// Set the full delivery policy. Overrides any previously set policy fields.
     pub fn policy(mut self, policy: QueuePolicy) -> Self {
         self.msg.policy = Some(policy);
         self
     }
 
+    /// Set message expiration in seconds. The message is discarded after this duration.
+    /// Must be >= 0 (0 means no expiration).
     pub fn expiration_seconds(mut self, seconds: i32) -> Self {
         let p = self.msg.policy.get_or_insert_with(QueuePolicy::default);
         p.expiration_seconds = seconds;
         self
     }
 
+    /// Set message delivery delay in seconds. The message becomes visible after this duration.
+    /// Must be >= 0 (0 means immediate delivery).
     pub fn delay_seconds(mut self, seconds: i32) -> Self {
         let p = self.msg.policy.get_or_insert_with(QueuePolicy::default);
         p.delay_seconds = seconds;
         self
     }
 
+    /// Set the maximum number of delivery attempts before routing to the dead-letter queue.
+    /// Must be >= 0 (0 means unlimited attempts).
     pub fn max_receive_count(mut self, count: i32) -> Self {
         let p = self.msg.policy.get_or_insert_with(QueuePolicy::default);
         p.max_receive_count = count;
         self
     }
 
+    /// Set the dead-letter queue channel. Messages exceeding `max_receive_count` are routed here.
     pub fn max_receive_queue(mut self, queue: impl Into<String>) -> Self {
         let p = self.msg.policy.get_or_insert_with(QueuePolicy::default);
         p.max_receive_queue = queue.into();
         self
     }
 
+    /// Consume the builder and return the constructed [`QueueMessage`].
     pub fn build(self) -> QueueMessage {
         self.msg
     }
@@ -123,36 +171,64 @@ impl Default for QueueMessageBuilder {
     }
 }
 
-/// Queue message delivery policy.
+/// Delivery policy for a queue message.
+///
+/// Controls expiration, delayed delivery, and dead-letter routing.
+/// All values default to 0/empty (no policy applied).
 #[derive(Debug, Clone, Default)]
 pub struct QueuePolicy {
+    /// Seconds until the message expires and is discarded. 0 = no expiration.
     pub expiration_seconds: i32,
+    /// Seconds to delay before the message becomes visible. 0 = immediate.
     pub delay_seconds: i32,
+    /// Maximum delivery attempts before routing to `max_receive_queue`. 0 = unlimited.
     pub max_receive_count: i32,
+    /// Dead-letter queue channel. Messages exceeding `max_receive_count` are routed here.
     pub max_receive_queue: String,
 }
 
-/// Server-assigned attributes on received queue messages.
+/// Server-assigned attributes present on received queue messages.
+///
+/// This struct is populated by the server and is only present on messages
+/// returned from receive/poll operations. It is `None` when constructing
+/// outbound messages.
 #[derive(Debug, Clone)]
 pub struct QueueMessageAttributes {
+    /// Server timestamp (Unix nanoseconds) when the message was enqueued.
     pub timestamp: i64,
+    /// Monotonically increasing sequence number within the queue.
     pub sequence: u64,
+    /// MD5 hash of the message body, computed by the server.
     pub md5_of_body: String,
+    /// Number of times this message has been delivered (including this delivery).
     pub receive_count: i32,
+    /// `true` if this message was re-routed from another queue (e.g., dead-letter).
     pub re_routed: bool,
+    /// Original queue channel when `re_routed` is `true`.
     pub re_routed_from_queue: String,
+    /// Unix timestamp (nanoseconds) when the message expires. 0 = no expiration.
     pub expiration_at: i64,
+    /// Unix timestamp (nanoseconds) until which the message is delayed. 0 = not delayed.
     pub delayed_to: i64,
 }
 
-/// Result of a single queue message send.
+/// Result of a single queue message send operation.
+///
+/// Use [`into_result()`](Self::into_result) to convert into a standard
+/// `Result`, which returns `Err` when `is_error` is `true`.
 #[derive(Debug, Clone)]
 pub struct QueueSendResult {
+    /// Server-assigned message identifier.
     pub message_id: String,
+    /// Unix timestamp (nanoseconds) when the message was accepted.
     pub sent_at: i64,
+    /// Unix timestamp (nanoseconds) when the message will expire.
     pub expiration_at: i64,
+    /// Unix timestamp (nanoseconds) until which the message is delayed.
     pub delayed_to: i64,
+    /// `true` if the server reported an error.
     pub is_error: bool,
+    /// Server-provided error message when `is_error` is `true`.
     pub error: String,
 }
 
@@ -176,21 +252,31 @@ impl QueueSendResult {
     }
 }
 
-/// Request to acknowledge all messages in a queue.
+/// Request to acknowledge all pending messages in a queue channel.
+///
+/// Used with [`KubemqClient::ack_all_queue_messages()`].
 #[derive(Debug, Clone)]
 pub struct AckAllQueueMessagesRequest {
+    /// Request identifier. Auto-generated (UUID v4) when empty.
     pub request_id: String,
+    /// Client identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Queue channel to acknowledge messages in (required).
     pub channel: String,
+    /// Maximum time (seconds) to wait for the operation to complete.
     pub wait_time_seconds: i32,
 }
 
-/// Response from acknowledge all queue messages.
+/// Response from an acknowledge-all queue messages operation.
 #[derive(Debug, Clone)]
 pub struct AckAllQueueMessagesResponse {
+    /// Request identifier echoed from the request.
     pub request_id: String,
+    /// Number of messages that were acknowledged.
     pub affected_messages: u64,
+    /// `true` if the server reported an error.
     pub is_error: bool,
+    /// Server-provided error message when `is_error` is `true`.
     pub error: String,
 }
 

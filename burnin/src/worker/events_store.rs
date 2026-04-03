@@ -44,14 +44,7 @@ impl EventsStoreProducer {
         }
         self.running.store(true, Ordering::SeqCst);
 
-        let mut handle = match client.send_event_store_stream().await {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::error!("EventsStoreProducer {}: failed to open stream: {}", self.id, e);
-                return;
-            }
-        };
-
+        // Use synchronous send for events_store (0% loss requirement needs server confirmation)
         let mut interval = tokio::time::interval(Duration::from_secs_f64(1.0 / self.rate as f64));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
 
@@ -59,14 +52,6 @@ impl EventsStoreProducer {
             if self.paused.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
-            }
-
-            // Drain pending results (non-blocking) — count failures
-            while let Ok(result) = handle.results().try_recv() {
-                if !result.sent {
-                    self.errors.fetch_add(1, Ordering::SeqCst);
-                    tracing::warn!("Events store stream result error: {}", result.error);
-                }
             }
 
             interval.tick().await;
@@ -77,19 +62,20 @@ impl EventsStoreProducer {
                 .body(body)
                 .build();
 
-            match handle.send(event).await {
-                Ok(()) => {
-                    self.sent.fetch_add(1, Ordering::SeqCst);
+            match client.send_event_store(event).await {
+                Ok(result) => {
+                    if result.sent {
+                        self.sent.fetch_add(1, Ordering::SeqCst);
+                    } else {
+                        self.errors.fetch_add(1, Ordering::SeqCst);
+                    }
                 }
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::SeqCst);
-                    tracing::warn!("Events store stream send error: {}", e);
-                    break;
+                    tracing::warn!("Events store send error: {}", e);
                 }
             }
         }
-
-        handle.close();
     }
 
     pub fn sent(&self) -> u64 {
