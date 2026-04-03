@@ -1,0 +1,11 @@
+mod channels_test;
+mod commands_test;
+mod concurrency_test;
+mod coverage_client_test;
+mod coverage_grpc_test;
+mod events_store_test;
+mod events_test;
+mod queries_test;
+mod queues_simple_test;
+mod queues_stream_test;
+mod reconnection_test;

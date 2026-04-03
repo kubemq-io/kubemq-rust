@@ -1,0 +1,28 @@
+[package]
+name = "kubemq-burnin"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[[bin]]
+name = "kubemq-burnin"
+path = "src/main.rs"
+
+[dependencies]
+kubemq = { path = ".." }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { version = "0.4", features = ["serde"] }
+tower-http = { version = "0.6", features = ["cors"] }
+anyhow = "1"
+async-trait = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+rand = "0.8"
+crc32fast = "1"
