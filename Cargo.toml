@@ -1,0 +1,77 @@
+[package]
+name = "kubemq"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["KubeMQ Team"]
+description = "KubeMQ Rust SDK - Message broker client for events, commands, queries, and queues"
+license = "Apache-2.0"
+repository = "https://github.com/kubemq-io/kubemq-rust"
+documentation = "https://docs.rs/kubemq"
+readme = "README.md"
+keywords = ["kubemq", "messaging", "grpc", "events", "queues"]
+categories = ["network-programming", "asynchronous"]
+
+[features]
+default = []
+
+[dependencies]
+# gRPC / Proto
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+prost = "0.13"
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+
+# Error handling
+thiserror = "2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+rand = "0.9"
+async-trait = "0.1"
+
+# Encoding
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
+tempfile = "3"
+test-log = "0.2"
+proptest = "1"
+
+[build-dependencies]
+tonic-build = "0.12"
+prost-build = "0.13"
+
+[[bench]]
+name = "events_bench"
+harness = false
+
+[[bench]]
+name = "events_store_bench"
+harness = false
+
+[[bench]]
+name = "queues_bench"
+harness = false
+
+[[bench]]
+name = "commands_bench"
+harness = false
+
+[[bench]]
+name = "queries_bench"
+harness = false
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]

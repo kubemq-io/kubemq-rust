@@ -1,0 +1,16 @@
+mod auth_test;
+mod commands_test;
+mod config_test;
+mod connection_test;
+mod coverage_common_test;
+mod coverage_error_test;
+mod coverage_stream_test;
+mod env_test;
+mod error_test;
+mod events_store_test;
+mod events_test;
+mod queries_test;
+mod queues_test;
+mod retry_test;
+mod tls_test;
+mod validate_test;
