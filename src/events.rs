@@ -10,14 +10,27 @@ use crate::proto::kubemq as proto;
 use crate::subscription::Subscription;
 use crate::validate;
 
-/// Outbound event message. Not thread-safe -- create per-send.
+/// Outbound fire-and-forget event message for the Pub/Sub pattern.
+///
+/// Events are not persisted — they are delivered to all active subscribers
+/// and then discarded. For persistent delivery, use [`EventStore`](crate::EventStore).
+///
+/// Not thread-safe — create a new instance per send.
+///
+/// Use [`Event::builder()`] to construct instances.
 #[derive(Debug, Clone)]
 pub struct Event {
+    /// Unique message identifier. Auto-generated (UUID v4) when empty.
     pub id: String,
+    /// Target channel name. Required; must not contain wildcards for sends.
     pub channel: String,
+    /// Optional UTF-8 metadata string (e.g., content type, correlation ID).
     pub metadata: String,
+    /// Message payload bytes. At least one of `body` or `metadata` must be non-empty.
     pub body: Vec<u8>,
+    /// Sender identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Arbitrary key-value pairs attached to the event. Keys and values must be non-empty.
     pub tags: HashMap<String, String>,
 }
 
@@ -28,12 +41,27 @@ impl Event {
     }
 }
 
-/// Builder for creating events.
+/// Builder for constructing [`Event`] instances using a fluent API.
+///
+/// All fields are optional. `channel` is required at send time.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::prelude::*;
+///
+/// let event = Event::builder()
+///     .channel("notifications")
+///     .body(b"hello world".to_vec())
+///     .add_tag("source", "sensor-1")
+///     .build();
+/// ```
 pub struct EventBuilder {
     event: Event,
 }
 
 impl EventBuilder {
+    /// Create a new builder with all fields set to their defaults.
     pub fn new() -> Self {
         Self {
             event: Event {
@@ -47,41 +75,49 @@ impl EventBuilder {
         }
     }
 
+    /// Set the message ID. If omitted, a UUID v4 is generated at send time.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.event.id = id.into();
         self
     }
 
+    /// Set the target channel name (required).
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         self.event.channel = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata (e.g., content type, correlation ID).
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.event.metadata = metadata.into();
         self
     }
 
+    /// Set the message payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.event.body = body.into();
         self
     }
 
+    /// Override the client-level `client_id` for this message.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.event.client_id = client_id.into();
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.event.tags = tags;
         self
     }
 
+    /// Add a single key-value tag. Both key and value must be non-empty.
     pub fn add_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.event.tags.insert(key.into(), value.into());
         self
     }
 
+    /// Consume the builder and return the constructed [`Event`].
     pub fn build(self) -> Event {
         self.event
     }
@@ -93,27 +129,46 @@ impl Default for EventBuilder {
     }
 }
 
-/// Received event from a subscription.
+/// An event received from a subscription callback.
+///
+/// Delivered to the `on_event` closure passed to
+/// [`KubemqClient::subscribe_to_events()`].
 #[derive(Debug, Clone)]
 pub struct EventReceive {
+    /// Server-assigned event identifier.
     pub id: String,
+    /// The channel this event was published to.
     pub channel: String,
+    /// UTF-8 metadata attached by the publisher.
     pub metadata: String,
+    /// Message payload bytes.
     pub body: Vec<u8>,
+    /// Server timestamp (Unix nanoseconds) when the event was received.
     pub timestamp: i64,
+    /// Monotonically increasing sequence number within the channel.
     pub sequence: u64,
+    /// Key-value tags attached by the publisher.
     pub tags: HashMap<String, String>,
 }
 
-/// Result of a stream event send.
+/// Per-event result returned from a streaming send via [`EventStreamHandle`].
 #[derive(Debug, Clone)]
 pub struct EventStreamResult {
+    /// Identifier of the event this result corresponds to.
     pub event_id: String,
+    /// `true` if the server accepted the event.
     pub sent: bool,
+    /// Server-provided error message when `sent` is `false`.
     pub error: String,
 }
 
 /// Handle for a bidirectional event send stream.
+///
+/// Obtained from [`KubemqClient::send_event_stream()`]. Provides a
+/// non-blocking [`send()`](Self::send) method for high-throughput publishing
+/// and an [`errors()`](Self::errors) receiver for asynchronous error
+/// notifications. The stream is cancelled on [`close()`](Self::close) or
+/// when the handle is dropped.
 pub struct EventStreamHandle {
     sender: tokio::sync::mpsc::Sender<Event>,
     errors: tokio::sync::mpsc::Receiver<KubemqError>,

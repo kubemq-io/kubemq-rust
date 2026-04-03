@@ -9,18 +9,35 @@ use crate::proto::kubemq as proto;
 use crate::subscription::Subscription;
 use crate::validate;
 
-/// Outbound query request.
+/// Outbound query request for the RPC (Command/Query) pattern.
+///
+/// Queries are point-to-point with optional server-side caching: the sender
+/// blocks until exactly one subscriber responds with a [`QueryResponse`],
+/// or the timeout expires. When a `cache_key` is set, the server may return
+/// a cached response without forwarding to a subscriber.
+///
+/// Use [`Query::builder()`] to construct instances.
 #[derive(Debug, Clone)]
 pub struct Query {
+    /// Unique request identifier. Auto-generated (UUID v4) when empty.
     pub id: String,
+    /// Target channel name. Required; must not contain wildcards.
     pub channel: String,
+    /// Optional UTF-8 metadata string (e.g., query name, correlation ID).
     pub metadata: String,
+    /// Query payload bytes.
     pub body: Vec<u8>,
+    /// Maximum time to wait for a response. Defaults to 5 seconds.
     pub timeout: Duration,
+    /// Sender identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Optional cache key for server-side response caching. Empty disables caching.
     pub cache_key: String,
+    /// Time-to-live for the cached response. Only used when `cache_key` is set.
     pub cache_ttl: Duration,
+    /// Arbitrary key-value pairs attached to the query. Keys and values must be non-empty.
     pub tags: HashMap<String, String>,
+    /// OpenTelemetry span context for distributed tracing. Usually left empty.
     pub span: Vec<u8>,
 }
 
@@ -31,12 +48,30 @@ impl Query {
     }
 }
 
-/// Builder for creating queries.
+/// Builder for constructing [`Query`] instances using a fluent API.
+///
+/// All fields are optional. `channel` and `timeout` are required at send time.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::prelude::*;
+/// use std::time::Duration;
+///
+/// let query = Query::builder()
+///     .channel("inventory.lookup")
+///     .body(b"sku-12345".to_vec())
+///     .timeout(Duration::from_secs(10))
+///     .cache_key("sku-12345")
+///     .cache_ttl(Duration::from_secs(60))
+///     .build();
+/// ```
 pub struct QueryBuilder {
     query: Query,
 }
 
 impl QueryBuilder {
+    /// Create a new builder with all fields set to their defaults (5s timeout, no cache).
     pub fn new() -> Self {
         Self {
             query: Query {
@@ -54,56 +89,67 @@ impl QueryBuilder {
         }
     }
 
+    /// Set the request ID. If omitted, a UUID v4 is generated at send time.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.query.id = id.into();
         self
     }
 
+    /// Set the target channel name (required).
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         self.query.channel = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata (e.g., query name, correlation ID).
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.query.metadata = metadata.into();
         self
     }
 
+    /// Set the query payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.query.body = body.into();
         self
     }
 
+    /// Set the maximum time to wait for a response. Must be > 0.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.query.timeout = timeout;
         self
     }
 
+    /// Override the client-level `client_id` for this request.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.query.client_id = client_id.into();
         self
     }
 
+    /// Set the cache key for server-side response caching. Empty disables caching.
     pub fn cache_key(mut self, key: impl Into<String>) -> Self {
         self.query.cache_key = key.into();
         self
     }
 
+    /// Set the time-to-live for the cached response. Only used when `cache_key` is set.
     pub fn cache_ttl(mut self, ttl: Duration) -> Self {
         self.query.cache_ttl = ttl;
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.query.tags = tags;
         self
     }
 
+    /// Add a single key-value tag. Both key and value must be non-empty.
     pub fn add_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.query.tags.insert(key.into(), value.into());
         self
     }
 
+    /// Consume the builder and return the constructed [`Query`].
     pub fn build(self) -> Query {
         self.query
     }
@@ -115,30 +161,55 @@ impl Default for QueryBuilder {
     }
 }
 
-/// Received query from subscription.
+/// A query received from a subscription callback.
+///
+/// Delivered to the `on_query` closure passed to
+/// [`KubemqClient::subscribe_to_queries()`]. The handler should process
+/// the query and send a [`QueryReply`] via
+/// [`KubemqClient::send_query_response()`].
 #[derive(Debug, Clone)]
 pub struct QueryReceive {
+    /// Request identifier — use this as `request_id` in the reply.
     pub id: String,
+    /// The channel this query was sent to.
     pub channel: String,
+    /// Identity of the sender.
     pub client_id: String,
+    /// UTF-8 metadata attached by the sender.
     pub metadata: String,
+    /// Query payload bytes.
     pub body: Vec<u8>,
+    /// Reply channel — use this as `response_to` in the reply.
     pub response_to: String,
+    /// Key-value tags attached by the sender.
     pub tags: HashMap<String, String>,
+    /// OpenTelemetry span context for distributed tracing.
     pub span: Vec<u8>,
 }
 
-/// Result of sending a query (response from subscriber).
+/// Response received after sending a query via [`KubemqClient::send_query()`].
+///
+/// Use [`into_result()`](Self::into_result) to convert into a standard
+/// `Result`, which returns `Err` when `executed` is `false`.
 #[derive(Debug, Clone)]
 pub struct QueryResponse {
+    /// Identifier of the original query request.
     pub query_id: String,
+    /// `true` if the subscriber reported successful execution.
     pub executed: bool,
+    /// Server timestamp (Unix nanoseconds) when the response was created.
     pub executed_at: i64,
+    /// UTF-8 metadata returned by the subscriber.
     pub metadata: String,
+    /// Identity of the subscriber that handled the query.
     pub response_client_id: String,
+    /// Response payload bytes from the subscriber.
     pub body: Vec<u8>,
+    /// `true` if this response was served from the server-side cache.
     pub cache_hit: bool,
+    /// Error message from the subscriber when `executed` is `false`.
     pub error: String,
+    /// Key-value tags attached by the subscriber.
     pub tags: HashMap<String, String>,
 }
 
@@ -167,18 +238,32 @@ impl QueryResponse {
     }
 }
 
-/// Outbound query reply (sent by subscriber).
+/// Outbound query reply sent by a subscriber via
+/// [`KubemqClient::send_query_response()`].
+///
+/// Copy `id` and `response_to` from the received [`QueryReceive`].
+/// If `error` is `None`, the query is marked as executed successfully.
 #[derive(Debug, Clone)]
 pub struct QueryReply {
+    /// Must match [`QueryReceive::id`] of the incoming query.
     pub request_id: String,
+    /// Must match [`QueryReceive::response_to`] of the incoming query.
     pub response_to: String,
+    /// Optional UTF-8 metadata to include in the reply.
     pub metadata: String,
+    /// Response payload bytes.
     pub body: Vec<u8>,
+    /// Responder identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Timestamp indicating when the query was executed.
     pub executed_at: i64,
+    /// Set to `Some(message)` to report a failure; `None` means success.
     pub error: Option<String>,
+    /// Arbitrary key-value pairs to attach to the reply.
     pub tags: HashMap<String, String>,
+    /// Whether this reply should be treated as a cache hit.
     pub cache_hit: bool,
+    /// OpenTelemetry span context for distributed tracing.
     pub span: Vec<u8>,
 }
 
@@ -189,12 +274,16 @@ impl QueryReply {
     }
 }
 
-/// Builder for creating query replies.
+/// Builder for constructing [`QueryReply`] instances using a fluent API.
+///
+/// `request_id` and `response_to` are required and must match the values
+/// from the received [`QueryReceive`].
 pub struct QueryReplyBuilder {
     reply: QueryReply,
 }
 
 impl QueryReplyBuilder {
+    /// Create a new builder with all fields set to their defaults.
     pub fn new() -> Self {
         Self {
             reply: QueryReply {
@@ -212,46 +301,55 @@ impl QueryReplyBuilder {
         }
     }
 
+    /// Set the request ID (required). Must match [`QueryReceive::id`].
     pub fn request_id(mut self, id: impl Into<String>) -> Self {
         self.reply.request_id = id.into();
         self
     }
 
+    /// Set the reply channel (required). Must match [`QueryReceive::response_to`].
     pub fn response_to(mut self, channel: impl Into<String>) -> Self {
         self.reply.response_to = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata to include in the reply.
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.reply.metadata = metadata.into();
         self
     }
 
+    /// Set the response payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.reply.body = body.into();
         self
     }
 
+    /// Override the client-level `client_id` for this reply.
     pub fn client_id(mut self, id: impl Into<String>) -> Self {
         self.reply.client_id = id.into();
         self
     }
 
+    /// Set the execution timestamp.
     pub fn executed_at(mut self, time: i64) -> Self {
         self.reply.executed_at = time;
         self
     }
 
+    /// Report an error. Setting this marks the query as not executed.
     pub fn error(mut self, err: impl Into<String>) -> Self {
         self.reply.error = Some(err.into());
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.reply.tags = tags;
         self
     }
 
+    /// Consume the builder and return the constructed [`QueryReply`].
     pub fn build(self) -> QueryReply {
         self.reply
     }

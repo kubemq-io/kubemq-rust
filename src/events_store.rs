@@ -12,14 +12,25 @@ use crate::proto::kubemq as proto;
 use crate::subscription::Subscription;
 use crate::validate;
 
-/// Outbound event store message.
+/// Outbound persistent event message for the Events Store (Pub/Sub) pattern.
+///
+/// Unlike [`Event`](crate::Event), event store messages are persisted on the
+/// broker and can be replayed from a specific position by new subscribers.
+///
+/// Use [`EventStore::builder()`] to construct instances.
 #[derive(Debug, Clone)]
 pub struct EventStore {
+    /// Unique message identifier. Auto-generated (UUID v4) when empty.
     pub id: String,
+    /// Target channel name. Required; must not contain wildcards for sends.
     pub channel: String,
+    /// Optional UTF-8 metadata string (e.g., content type, correlation ID).
     pub metadata: String,
+    /// Message payload bytes. At least one of `body` or `metadata` must be non-empty.
     pub body: Vec<u8>,
+    /// Sender identity. Falls back to the client-level `client_id` when empty.
     pub client_id: String,
+    /// Arbitrary key-value pairs attached to the message. Keys and values must be non-empty.
     pub tags: HashMap<String, String>,
 }
 
@@ -30,12 +41,27 @@ impl EventStore {
     }
 }
 
-/// Builder for creating event store messages.
+/// Builder for constructing [`EventStore`] instances using a fluent API.
+///
+/// All fields are optional. `channel` is required at send time.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::prelude::*;
+///
+/// let event = EventStore::builder()
+///     .channel("orders.created")
+///     .body(b"order-data".to_vec())
+///     .add_tag("priority", "high")
+///     .build();
+/// ```
 pub struct EventStoreBuilder {
     event: EventStore,
 }
 
 impl EventStoreBuilder {
+    /// Create a new builder with all fields set to their defaults.
     pub fn new() -> Self {
         Self {
             event: EventStore {
@@ -49,41 +75,49 @@ impl EventStoreBuilder {
         }
     }
 
+    /// Set the message ID. If omitted, a UUID v4 is generated at send time.
     pub fn id(mut self, id: impl Into<String>) -> Self {
         self.event.id = id.into();
         self
     }
 
+    /// Set the target channel name (required).
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         self.event.channel = channel.into();
         self
     }
 
+    /// Set optional UTF-8 metadata (e.g., content type, correlation ID).
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.event.metadata = metadata.into();
         self
     }
 
+    /// Set the message payload bytes.
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.event.body = body.into();
         self
     }
 
+    /// Override the client-level `client_id` for this message.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.event.client_id = client_id.into();
         self
     }
 
+    /// Replace all tags with the provided map.
     pub fn tags(mut self, tags: HashMap<String, String>) -> Self {
         self.event.tags = tags;
         self
     }
 
+    /// Add a single key-value tag. Both key and value must be non-empty.
     pub fn add_tag(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.event.tags.insert(key.into(), value.into());
         self
     }
 
+    /// Consume the builder and return the constructed [`EventStore`].
     pub fn build(self) -> EventStore {
         self.event
     }
@@ -95,11 +129,17 @@ impl Default for EventStoreBuilder {
     }
 }
 
-/// Result of a single event store send.
+/// Result of a single event store send operation.
+///
+/// Use [`into_result()`](Self::into_result) to convert into a standard
+/// `Result`, which returns `Err` when `sent` is `false`.
 #[derive(Debug, Clone)]
 pub struct EventStoreResult {
+    /// Server-assigned or client-provided event identifier.
     pub id: String,
+    /// `true` if the server persisted the event.
     pub sent: bool,
+    /// Server-provided error message when `sent` is `false`.
     pub error: String,
 }
 
@@ -128,27 +168,46 @@ impl EventStoreResult {
     }
 }
 
-/// Received event store message from a subscription.
+/// A persistent event received from an Events Store subscription callback.
+///
+/// Delivered to the `on_event` closure passed to
+/// [`KubemqClient::subscribe_to_events_store()`].
 #[derive(Debug, Clone)]
 pub struct EventStoreReceive {
+    /// Server-assigned event identifier.
     pub id: String,
+    /// Monotonically increasing sequence number within the channel.
     pub sequence: u64,
+    /// Server timestamp (Unix nanoseconds) when the event was persisted.
     pub timestamp: i64,
+    /// The channel this event was published to.
     pub channel: String,
+    /// UTF-8 metadata attached by the publisher.
     pub metadata: String,
+    /// Message payload bytes.
     pub body: Vec<u8>,
+    /// Key-value tags attached by the publisher.
     pub tags: HashMap<String, String>,
 }
 
-/// Event store subscription start position.
+/// Specifies where an Events Store subscription should begin reading.
+///
+/// Passed to [`KubemqClient::subscribe_to_events_store()`] to control
+/// which historical messages are delivered when the subscription starts.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum EventsStoreSubscription {
+    /// Receive only events published after the subscription is established.
     StartNewOnly,
+    /// Replay from the first event ever stored on the channel.
     StartFromFirst,
+    /// Start from the most recently stored event and continue forward.
     StartFromLast,
+    /// Start at a specific sequence number (inclusive).
     StartAtSequence(u64),
+    /// Start at a specific wall-clock time (events with timestamp >= this value).
     StartAtTime(SystemTime),
+    /// Start from `now - delta`. The server interprets the duration in whole seconds.
     StartAtTimeDelta(Duration),
 }
 
@@ -209,6 +268,11 @@ impl EventsStoreSubscription {
 }
 
 /// Handle for a bidirectional event store send stream.
+///
+/// Obtained from [`KubemqClient::send_event_store_stream()`]. Provides a
+/// non-blocking [`send()`](Self::send) method for high-throughput publishing
+/// and a [`results()`](Self::results) receiver for per-message acknowledgements.
+/// The stream is cancelled on [`close()`](Self::close) or when the handle is dropped.
 pub struct EventStoreStreamHandle {
     sender: tokio::sync::mpsc::Sender<EventStore>,
     results: tokio::sync::mpsc::Receiver<EventStreamResult>,
