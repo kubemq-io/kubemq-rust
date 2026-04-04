@@ -1,9 +1,22 @@
-/// Connection state machine.
+/// The connection state of a [`KubemqClient`](crate::KubemqClient).
+///
+/// Retrieve the current state via [`KubemqClient::state()`](crate::KubemqClient::state).
+///
+/// # State Transitions
+///
+/// ```text
+/// Idle → Ready → Closed
+/// ```
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
+    /// The client is initialized but not yet connected.
     Idle,
+    /// The client is connected and ready to send/receive messages.
     Ready,
+    /// The client has been closed via [`KubemqClient::close()`](crate::KubemqClient::close)
+    /// and cannot be reused. Operations will fail with
+    /// [`KubemqError::ClientClosed`](crate::KubemqError::ClientClosed).
     Closed,
 }
 

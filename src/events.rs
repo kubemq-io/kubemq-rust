@@ -275,7 +275,39 @@ fn proto_to_event_receive(p: proto::EventReceive) -> EventReceive {
 
 // Client methods for Events
 impl KubemqClient {
-    /// Send a single fire-and-forget event.
+    /// Sends a single fire-and-forget [`Event`] to the specified channel.
+    ///
+    /// Events are delivered to all active subscribers (fan-out). No delivery
+    /// guarantee — if no subscriber is listening, the event is dropped.
+    /// For persistent delivery, use [`send_event_store()`](Self::send_event_store).
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The [`Event`] to send. Build with [`Event::builder()`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty or contains wildcards, or body/metadata are both empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    /// * [`KubemqError::Timeout`] (gRPC `DEADLINE_EXCEEDED`) — if the operation times out. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let event = Event::builder()
+    ///     .channel("events.example")
+    ///     .body(b"Hello KubeMQ!".to_vec())
+    ///     .build();
+    ///
+    /// client.send_event(event).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_event(&self, event: Event) -> crate::Result<()> {
         self.check_state("send_event")?;
 
@@ -328,7 +360,38 @@ impl KubemqClient {
         }
     }
 
-    /// Open a bidirectional stream for high-throughput event publishing.
+    /// Opens a bidirectional stream for high-throughput [`Event`] publishing.
+    ///
+    /// Returns an [`EventStreamHandle`] that provides a non-blocking
+    /// [`send()`](EventStreamHandle::send) method. Errors are delivered
+    /// asynchronously via [`errors()`](EventStreamHandle::errors).
+    /// For single sends, use [`send_event()`](Self::send_event).
+    ///
+    /// # Returns
+    ///
+    /// An [`EventStreamHandle`] for sending events and receiving errors.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let mut handle = client.send_event_stream().await?;
+    /// let event = Event::builder()
+    ///     .channel("events.stream")
+    ///     .body(b"streamed event".to_vec())
+    ///     .build();
+    /// handle.send(event).await?;
+    /// handle.close();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_event_stream(&self) -> crate::Result<EventStreamHandle> {
         self.check_state("send_event_stream")?;
 
@@ -439,10 +502,49 @@ impl KubemqClient {
         Ok(EventStreamHandle::new(event_tx, error_rx, done_rx, cancel))
     }
 
-    /// Subscribe to events on a channel.
+    /// Subscribes to events on a channel.
     ///
-    /// Callbacks are async (REQ-M35). The subscription auto-reconnects on
-    /// retryable stream errors (REQ-H3).
+    /// The `on_event` callback is invoked for each received [`EventReceive`]. The
+    /// subscription automatically reconnects on retryable stream errors with backoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel name to subscribe to. Supports wildcards (`*`, `>`).
+    /// * `group` - Consumer group name. Empty string for no group (fan-out).
+    /// * `on_event` - Async callback invoked for each [`EventReceive`].
+    /// * `on_error` - Optional async error callback for stream errors.
+    ///
+    /// # Returns
+    ///
+    /// A [`Subscription`] handle for cancelling the subscription.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let sub = client.subscribe_to_events(
+    ///     "events.>",
+    ///     "",
+    ///     |event| Box::pin(async move {
+    ///         println!("Received: {}", String::from_utf8_lossy(&event.body));
+    ///     }),
+    ///     None,
+    /// ).await?;
+    ///
+    /// // Later: cancel the subscription
+    /// sub.unsubscribe().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(clippy::type_complexity)]
     pub async fn subscribe_to_events(
         &self,
@@ -597,7 +699,31 @@ impl KubemqClient {
         ))
     }
 
-    /// Convenience: publish event with minimal params.
+    /// Convenience method to publish an event with minimal parameters.
+    ///
+    /// Equivalent to building an [`Event`] and calling [`send_event()`](Self::send_event).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Target channel name.
+    /// * `body` - Message payload bytes.
+    /// * `metadata` - Optional UTF-8 metadata string.
+    /// * `tags` - Optional key-value tags.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`send_event()`](Self::send_event).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// client.publish_event("notifications", b"alert".to_vec(), None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn publish_event(
         &self,
         channel: &str,

@@ -1,4 +1,24 @@
-//! Example: Publish an event and subscribe to receive it.
+//! # Events Publish/Subscribe
+//!
+//! Demonstrates the basic pub/sub pattern: subscribes to a channel, publishes
+//! a single event, and receives it. Events are fire-and-forget — the publisher
+//! does not wait for subscriber acknowledgment.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received event: id=<uuid>, channel=events.example, body=13 bytes
+//! Event sent to channel: events.example
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_pubsub
+//! ```
 use kubemq::prelude::*;
 use kubemq::{EventBuilder, Subscription};
 use std::time::Duration;

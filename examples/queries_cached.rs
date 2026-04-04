@@ -1,4 +1,26 @@
-//! Example: Query with cache TTL -- verify cache hit on second query.
+//! # Queries with Cache
+//!
+//! Demonstrates server-side query response caching. The first query is handled
+//! by the responder and the result is cached with a TTL. The second identical
+//! query returns the cached response directly (`cache_hit=true`) without
+//! invoking the responder again.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Responder handling query: <uuid>
+//! First query: cache_hit=false, body=cached-response
+//! Second query: cache_hit=true, body=cached-response
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queries_cached
+//! ```
 use kubemq::prelude::*;
 use kubemq::{QueryBuilder, QueryReplyBuilder};
 use std::time::Duration;

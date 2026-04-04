@@ -12,25 +12,43 @@ use crate::queues::{
 };
 use crate::validate;
 
-/// Queue downstream request types matching proto enum.
+/// Request types for the queue downstream stream protocol.
+///
+/// These map 1:1 to the proto `QueuesDownstreamRequestType` enum values.
+/// Most users interact with settlement methods on [`PollResponse`] and
+/// [`QueueDownstreamMessage`] rather than using these directly.
 #[non_exhaustive]
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueDownstreamType {
+    /// Fetch messages from the queue.
     Get = 1,
+    /// Acknowledge all messages in the current transaction.
     AckAll = 2,
+    /// Acknowledge a specific range of messages by sequence.
     AckRange = 3,
+    /// Reject all messages in the current transaction (return to queue).
     NackAll = 4,
+    /// Reject a specific range of messages by sequence.
     NackRange = 5,
+    /// Re-queue all messages to a different channel.
     RequeueAll = 6,
+    /// Re-queue a specific range of messages to a different channel.
     RequeueRange = 7,
+    /// Query active message offsets.
     ActiveOffsets = 8,
+    /// Query the current transaction status.
     TransactionStatus = 9,
+    /// Client-initiated stream close.
     CloseByClient = 10,
+    /// Server-initiated stream close.
     CloseByServer = 11,
 }
 
-/// Backward-compatible constants module.
+/// Backward-compatible `i32` constants for [`QueueDownstreamType`] variants.
+///
+/// Prefer using the enum directly. These constants exist for compatibility
+/// with older code that used raw `i32` values.
 pub mod queue_downstream_type {
     use super::QueueDownstreamType;
     pub const GET: i32 = QueueDownstreamType::Get as i32;
@@ -46,7 +64,13 @@ pub mod queue_downstream_type {
     pub const CLOSE_BY_SERVER: i32 = QueueDownstreamType::CloseByServer as i32;
 }
 
-/// Handle for upstream queue message sending.
+/// Handle for a bidirectional queue upstream (send) stream.
+///
+/// Obtained from [`KubemqClient::queue_upstream()`]. Provides a
+/// non-blocking [`send()`](Self::send) method for high-throughput batch
+/// publishing and a [`results()`](Self::results) receiver for per-batch
+/// acknowledgements. The stream is cancelled on [`close()`](Self::close)
+/// or when the handle is dropped.
 pub struct QueueUpstreamHandle {
     sender: tokio::sync::mpsc::Sender<(String, Vec<QueueMessage>)>,
     results: tokio::sync::mpsc::Receiver<QueueUpstreamResult>,
@@ -105,16 +129,29 @@ impl Drop for QueueUpstreamHandle {
     }
 }
 
-/// Per-batch result from queue upstream send.
+/// Per-batch result from a queue upstream send operation.
+///
+/// Received via [`QueueUpstreamHandle::results()`].
 #[derive(Debug, Clone)]
 pub struct QueueUpstreamResult {
+    /// The `request_id` from the corresponding [`QueueUpstreamHandle::send()`] call.
     pub ref_request_id: String,
+    /// Per-message send results in the same order as the batch.
     pub results: Vec<QueueSendResult>,
+    /// `true` if the entire batch operation failed.
     pub is_error: bool,
+    /// Batch-level error message when `is_error` is `true`.
     pub error: String,
 }
 
-/// Persistent queue downstream receiver with auto-reconnection.
+/// Persistent queue downstream receiver for polling and settling messages.
+///
+/// Obtained from [`KubemqClient::new_queue_downstream_receiver()`]. The
+/// receiver holds a bidirectional gRPC stream and provides transactional
+/// message processing via [`poll()`](Self::poll).
+///
+/// `poll()` takes `&mut self` to prevent concurrent calls at compile time.
+/// Call [`close()`](Self::close) or drop the receiver to release resources.
 pub struct QueueDownstreamReceiver {
     sender: tokio::sync::mpsc::Sender<proto::QueuesDownstreamRequest>,
     receiver: tokio::sync::mpsc::Receiver<proto::QueuesDownstreamResponse>, // REQ-M52: no Arc<Mutex>
@@ -290,10 +327,18 @@ impl Drop for QueueDownstreamReceiver {
     }
 }
 
-/// A received downstream queue message with settlement methods.
+/// A received queue message with per-message settlement methods.
+///
+/// Each message can be individually acknowledged ([`ack()`](Self::ack)),
+/// rejected ([`nack()`](Self::nack)), or re-queued
+/// ([`re_queue()`](Self::re_queue)). Settlement operations are sent
+/// over the same downstream stream.
 pub struct QueueDownstreamMessage {
+    /// The underlying queue message with payload, tags, and attributes.
     pub message: QueueMessage,
+    /// Transaction identifier for this poll batch.
     pub transaction_id: String,
+    /// Sequence number of this message within the queue.
     pub sequence: u64,
     sender: tokio::sync::mpsc::Sender<proto::QueuesDownstreamRequest>,
     client_id: String,
@@ -363,22 +408,38 @@ impl QueueDownstreamMessage {
     }
 }
 
-/// Poll request configuration.
+/// Configuration for a queue poll operation.
+///
+/// Passed to [`QueueDownstreamReceiver::poll()`] or
+/// [`KubemqClient::poll_queue()`].
 #[derive(Debug, Clone)]
 pub struct PollRequest {
+    /// Queue channel to poll from (required).
     pub channel: String,
+    /// Maximum number of messages to receive. Must be > 0.
     pub max_items: i32,
+    /// Maximum seconds to wait for messages. Values < 1 default to 1 second.
     pub wait_timeout_seconds: i32,
+    /// When `true`, messages are automatically acknowledged upon delivery.
     pub auto_ack: bool,
 }
 
-/// Poll response containing received messages.
+/// Response from a queue poll operation containing received messages.
+///
+/// Provides batch settlement methods ([`ack_all()`](Self::ack_all),
+/// [`nack_all()`](Self::nack_all), [`re_queue_all()`](Self::re_queue_all))
+/// and individual settlement via each [`QueueDownstreamMessage`].
 pub struct PollResponse {
+    /// Server-assigned transaction identifier for this poll batch.
     pub transaction_id: String,
+    /// Received messages with per-message settlement methods.
     pub messages: Vec<QueueDownstreamMessage>,
+    /// `true` if the server reported an error.
     pub is_error: bool,
+    /// Server-provided error message when `is_error` is `true`.
     pub error: String,
-    pub transaction_complete: bool, // REQ-M2
+    /// `true` if all messages in the transaction have been settled.
+    pub transaction_complete: bool,
     sender: tokio::sync::mpsc::Sender<proto::QueuesDownstreamRequest>,
     client_id: String,
 }
@@ -451,7 +512,36 @@ impl PollResponse {
 
 // Client methods for Queue Stream API
 impl KubemqClient {
-    /// Open a bidirectional queue upstream stream.
+    /// Opens a bidirectional queue upstream (send) stream.
+    ///
+    /// Returns a [`QueueUpstreamHandle`] that provides high-throughput batch
+    /// publishing via [`send()`](QueueUpstreamHandle::send) and per-batch
+    /// confirmations via [`results()`](QueueUpstreamHandle::results).
+    ///
+    /// # Returns
+    ///
+    /// A [`QueueUpstreamHandle`] for sending message batches.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let mut handle = client.queue_upstream().await?;
+    /// let msgs = vec![
+    ///     QueueMessage::builder().channel("tasks").body(b"task-1".to_vec()).build(),
+    /// ];
+    /// handle.send("batch-1", msgs).await?;
+    /// handle.close();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn queue_upstream(&self) -> crate::Result<QueueUpstreamHandle> {
         self.check_state("queue_upstream")?;
 
@@ -563,7 +653,43 @@ impl KubemqClient {
         })
     }
 
-    /// Create a persistent queue downstream receiver.
+    /// Creates a persistent queue downstream receiver for polling and settling messages.
+    ///
+    /// The receiver holds a bidirectional gRPC stream. Use
+    /// [`poll()`](QueueDownstreamReceiver::poll) to fetch messages and settle
+    /// them via `ack()`, `nack()`, or `re_queue()` on each
+    /// [`QueueDownstreamMessage`], or batch-settle via [`PollResponse`] methods.
+    ///
+    /// # Returns
+    ///
+    /// A [`QueueDownstreamReceiver`] for polling messages.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let mut receiver = client.new_queue_downstream_receiver().await?;
+    /// let resp = receiver.poll(PollRequest {
+    ///     channel: "tasks".to_string(),
+    ///     max_items: 10,
+    ///     wait_timeout_seconds: 5,
+    ///     auto_ack: false,
+    /// }).await?;
+    ///
+    /// for msg in &resp.messages {
+    ///     msg.ack().await?;
+    /// }
+    /// receiver.close().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn new_queue_downstream_receiver(&self) -> crate::Result<QueueDownstreamReceiver> {
         self.check_state("queue_downstream")?;
 
@@ -645,9 +771,47 @@ impl KubemqClient {
         })
     }
 
-    /// Convenience: single poll. The caller must settle (ack/nack) messages
-    /// before the returned receiver is dropped.
-    /// For auto-ack use cases, set `auto_ack: true` in the PollRequest.
+    /// Convenience method for a single poll operation.
+    ///
+    /// Creates a downstream receiver, polls once, and returns both the response
+    /// and the receiver. The caller must settle (ack/nack) messages before
+    /// dropping the receiver. For auto-ack use cases, set `auto_ack: true`
+    /// in the [`PollRequest`].
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - A [`PollRequest`] specifying the channel, max items, and timeout.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of ([`PollResponse`], [`QueueDownstreamReceiver`]).
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty, contains wildcards, or `max_items` is zero.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Timeout`] — if the poll times out waiting for server response. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let (resp, _receiver) = client.poll_queue(PollRequest {
+    ///     channel: "tasks".to_string(),
+    ///     max_items: 5,
+    ///     wait_timeout_seconds: 10,
+    ///     auto_ack: true,
+    /// }).await?;
+    ///
+    /// for msg in &resp.messages {
+    ///     println!("Received: {}", String::from_utf8_lossy(&msg.message.body));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn poll_queue(
         &self,
         request: PollRequest,

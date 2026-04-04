@@ -1,4 +1,27 @@
-//! Example: Command handler with consumer group.
+//! # Commands with Consumer Group
+//!
+//! Demonstrates load-balanced command handling using a consumer group. Two
+//! command handlers join the same group — each incoming command is routed to
+//! only one handler, distributing the RPC workload.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Handler-1 received command: <uuid>
+//! Command 0 response: executed=true
+//! Handler-2 received command: <uuid>
+//! Command 1 response: executed=true
+//! ...
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example commands_group
+//! ```
 use kubemq::prelude::*;
 use kubemq::{CommandBuilder, CommandReplyBuilder};
 use std::time::Duration;

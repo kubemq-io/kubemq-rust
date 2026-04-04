@@ -1,4 +1,28 @@
-//! Example: Queue stream downstream with auto-ack mode.
+//! # Queue Stream Auto-Ack
+//!
+//! Demonstrates queue stream polling with automatic acknowledgment. When
+//! `auto_ack` is set to `true` in the `PollRequest`, messages are automatically
+//! acknowledged by the broker upon delivery — no explicit ack call is needed.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Auto-ack polled: 5 messages
+//!   id=<uuid>, body=auto-ack-msg-0
+//!   id=<uuid>, body=auto-ack-msg-1
+//!   id=<uuid>, body=auto-ack-msg-2
+//!   id=<uuid>, body=auto-ack-msg-3
+//!   id=<uuid>, body=auto-ack-msg-4
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_auto_ack
+//! ```
 use kubemq::prelude::*;
 use kubemq::{PollRequest, QueueMessageBuilder};
 

@@ -1,16 +1,42 @@
-/// Machine-readable error codes.
+/// Machine-readable error codes for classifying [`KubemqError`] variants.
+///
+/// Each variant maps to one or more gRPC status codes and indicates whether
+/// the error is retryable. Use [`KubemqError::code()`] to extract the code
+/// from an error, and [`KubemqError::is_retryable()`] to check if the
+/// operation can be retried.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorCode {
+    /// A transient failure occurred. The operation can be retried with backoff.
+    /// Maps to gRPC `UNKNOWN`, `ABORTED`, `UNAVAILABLE`.
     Transient,
+    /// The operation timed out. Retryable with a longer timeout or backoff.
+    /// Maps to gRPC `DEADLINE_EXCEEDED`.
     Timeout,
+    /// The request was throttled due to rate limiting. Retryable with backoff.
+    /// Maps to gRPC `RESOURCE_EXHAUSTED`.
     Throttling,
+    /// Authentication failed — the auth token is invalid or expired.
+    /// Maps to gRPC `UNAUTHENTICATED`. Not retryable — fix credentials.
     Authentication,
+    /// The client lacks permission for this operation.
+    /// Maps to gRPC `PERMISSION_DENIED`. Not retryable — check ACL configuration.
     Authorization,
+    /// The request contained invalid arguments or violated a precondition.
+    /// Maps to gRPC `INVALID_ARGUMENT`, `ALREADY_EXISTS`, `FAILED_PRECONDITION`, `OUT_OF_RANGE`.
+    /// Not retryable — fix the request before retrying.
     Validation,
+    /// The requested resource (e.g., channel) was not found.
+    /// Maps to gRPC `NOT_FOUND`. Not retryable — create the resource first.
     NotFound,
+    /// An unrecoverable server-side error. Do not retry.
+    /// Maps to gRPC `UNIMPLEMENTED`, `INTERNAL`, `DATA_LOSS`.
     Fatal,
+    /// The operation was cancelled, typically by the caller.
+    /// Maps to gRPC `CANCELLED`. Not retryable.
     Cancellation,
+    /// The internal send buffer is full — the operation cannot be queued.
+    /// Not a network error. Consider reducing send rate or increasing buffer capacity.
     Backpressure,
 }
 
@@ -44,128 +70,283 @@ impl From<std::io::Error> for KubemqError {
 }
 
 /// The primary error type returned by all SDK operations.
+///
+/// Each variant carries context about the failure including a machine-readable
+/// [`ErrorCode`], a human-readable message, an optional recovery suggestion,
+/// and the originating source error.
+///
+/// Use [`is_retryable()`](Self::is_retryable) to check if an operation can be retried,
+/// [`code()`](Self::code) for the machine-readable classification, and
+/// [`suggestion()`](Self::suggestion) for recovery guidance.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use kubemq::prelude::*;
+///
+/// # async fn example() -> kubemq::Result<()> {
+/// let client = KubemqClient::builder()
+///     .host("localhost").port(50000)
+///     .build().await?;
+///
+/// match client.ping().await {
+///     Ok(info) => println!("Connected: {}", info.host),
+///     Err(e) if e.is_retryable() => {
+///         eprintln!("Retryable error ({}): {}", e.code(), e);
+///         let suggestion = e.suggestion();
+///         if !suggestion.is_empty() {
+///             eprintln!("Suggestion: {}", suggestion);
+///         }
+///     }
+///     Err(e) => eprintln!("Fatal error: {}", e),
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum KubemqError {
+    /// A transient failure that may succeed on retry with backoff.
+    ///
+    /// Retryable. Maps to gRPC `UNKNOWN`, `ABORTED`, or `UNAVAILABLE`.
     #[error("{operation} failed on channel \"{channel}\": {message}")]
     Transient {
+        /// Machine-readable error code — always [`ErrorCode::Transient`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed (e.g., `"send_event"`).
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// Whether this error can be retried.
         is_retryable: bool,
+        /// The underlying error, if any.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Request ID for correlation.
         request_id: String,
+        /// Recovery suggestion (e.g., `"Retry the operation."`).
         suggestion: &'static str,
     },
 
+    /// The operation timed out. Retryable with a longer timeout or backoff.
+    ///
+    /// Maps to gRPC `DEADLINE_EXCEEDED`.
     #[error("{operation} timed out on channel \"{channel}\": {message}")]
     Timeout {
+        /// Machine-readable error code — always [`ErrorCode::Timeout`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that timed out (e.g., `"send_command"`).
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// Whether this error can be retried.
         is_retryable: bool,
+        /// The underlying error, if any.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Request ID for correlation.
         request_id: String,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// Authentication failed — the auth token is invalid or expired.
+    ///
+    /// Not retryable. Maps to gRPC `UNAUTHENTICATED`.
     #[error("authentication failed: {message}")]
     Authentication {
+        /// Machine-readable error code — always [`ErrorCode::Authentication`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed.
         operation: String,
+        /// The underlying error, if any.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The client lacks permission for this operation on the specified channel.
+    ///
+    /// Not retryable. Maps to gRPC `PERMISSION_DENIED`.
     #[error("authorization failed on channel \"{channel}\": {message}")]
     Authorization {
+        /// Machine-readable error code — always [`ErrorCode::Authorization`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed.
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// The underlying error, if any.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The request contained invalid arguments or violated a precondition.
+    ///
+    /// Not retryable — fix the request before retrying. Maps to gRPC
+    /// `INVALID_ARGUMENT`, `ALREADY_EXISTS`, `FAILED_PRECONDITION`, `OUT_OF_RANGE`.
     #[error("validation failed: {message}")]
     Validation {
+        /// Machine-readable error code — always [`ErrorCode::Validation`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed.
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The requested resource (e.g., channel) was not found.
+    ///
+    /// Not retryable — create the resource first. Maps to gRPC `NOT_FOUND`.
     #[error("not found: {message}")]
     NotFound {
+        /// Machine-readable error code — always [`ErrorCode::NotFound`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed.
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// An unrecoverable server-side error. Do not retry.
+    ///
+    /// Maps to gRPC `UNIMPLEMENTED`, `INTERNAL`, `DATA_LOSS`.
     #[error("fatal error: {message}")]
     Fatal {
+        /// Machine-readable error code — always [`ErrorCode::Fatal`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that failed.
         operation: String,
+        /// The underlying error, if any.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The operation was cancelled, typically by the caller or a context timeout.
+    ///
+    /// Not retryable. Maps to gRPC `CANCELLED`.
     #[error("operation cancelled: {message}")]
     Cancellation {
+        /// Machine-readable error code — always [`ErrorCode::Cancellation`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that was cancelled (e.g., `"send_event"`).
         operation: String,
     },
 
+    /// The request was throttled due to rate limiting. Retryable with backoff.
+    ///
+    /// Maps to gRPC `RESOURCE_EXHAUSTED`.
     #[error("throttled: {message}")]
     Throttling {
+        /// Machine-readable error code — always [`ErrorCode::Throttling`].
         code: ErrorCode,
+        /// Human-readable error description.
         message: String,
+        /// The operation that was throttled.
         operation: String,
+        /// The target channel name.
         channel: String,
+        /// Whether this error can be retried.
         is_retryable: bool,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The internal send buffer is full — the operation cannot be queued.
+    ///
+    /// Not retryable immediately. Consider reducing send rate or increasing buffer capacity.
     #[error("backpressure: buffer full (capacity={buffer_size}, queued={queued_count})")]
     BufferFull {
+        /// Machine-readable error code — always [`ErrorCode::Backpressure`].
         code: ErrorCode,
+        /// Maximum buffer capacity.
         buffer_size: usize,
+        /// Number of messages currently queued.
         queued_count: usize,
+        /// Recovery suggestion.
         suggestion: &'static str,
     },
 
+    /// The stream was broken with unacknowledged messages still in flight.
+    ///
+    /// Not retryable. The caller should re-send unacknowledged messages.
     #[error("stream broken: {unacknowledged_count} unacknowledged messages")]
     StreamBroken {
+        /// IDs of messages that were sent but not acknowledged.
         unacknowledged_ids: Vec<String>,
+        /// Number of unacknowledged messages.
         unacknowledged_count: usize,
     },
 
+    /// The client has been closed and cannot be used for further operations.
+    ///
+    /// Returned when an operation is attempted after calling
+    /// [`KubemqClient::close()`](crate::KubemqClient::close).
     #[error("client closed")]
     ClientClosed,
 
+    /// A low-level transport failure occurred.
+    ///
+    /// Wraps the underlying transport error (e.g., gRPC connection failure).
     #[error("transport error [{operation}]: {source}")]
     Transport {
+        /// The operation that encountered the transport error.
         operation: String,
+        /// The underlying transport error.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// A user-provided callback or handler returned an error.
+    ///
+    /// Wraps the error returned by the user's message handler.
     #[error("handler error [{handler}]: {source}")]
     Handler {
+        /// The name of the handler that returned the error.
         handler: String,
+        /// The error returned by the handler.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
 
 impl KubemqError {
-    /// Check if this error is retryable.
+    /// Returns `true` if this error is transient and the operation may succeed on retry.
+    ///
+    /// Retryable variants: [`Transient`](Self::Transient), [`Timeout`](Self::Timeout),
+    /// [`Throttling`](Self::Throttling).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::KubemqError;
+    ///
+    /// fn handle_error(err: &KubemqError) {
+    ///     if err.is_retryable() {
+    ///         println!("Will retry: {}", err);
+    ///     } else {
+    ///         eprintln!("Permanent failure: {}", err);
+    ///     }
+    /// }
+    /// ```
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::Transient { is_retryable, .. } => *is_retryable,
@@ -175,7 +356,21 @@ impl KubemqError {
         }
     }
 
-    /// Get the error code.
+    /// Returns the machine-readable [`ErrorCode`] for this error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::{ErrorCode, KubemqError};
+    ///
+    /// fn classify(err: &KubemqError) {
+    ///     match err.code() {
+    ///         ErrorCode::Authentication => eprintln!("Check your auth token"),
+    ///         ErrorCode::Validation => eprintln!("Fix request parameters"),
+    ///         code => eprintln!("Error code: {:?}", code),
+    ///     }
+    /// }
+    /// ```
     pub fn code(&self) -> ErrorCode {
         match self {
             Self::Transient { code, .. } => *code,
@@ -195,7 +390,21 @@ impl KubemqError {
         }
     }
 
-    /// Get the suggestion for resolving this error.
+    /// Returns a human-readable recovery suggestion, or an empty string if none is available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::KubemqError;
+    ///
+    /// fn log_error(err: &KubemqError) {
+    ///     eprintln!("Error: {}", err);
+    ///     let hint = err.suggestion();
+    ///     if !hint.is_empty() {
+    ///         eprintln!("Suggestion: {}", hint);
+    ///     }
+    /// }
+    /// ```
     pub fn suggestion(&self) -> &str {
         match self {
             Self::Transient { suggestion, .. } => suggestion,
@@ -212,7 +421,9 @@ impl KubemqError {
         }
     }
 
-    /// Map a tonic gRPC status to KubemqError.
+    /// Maps a tonic gRPC status to the appropriate [`KubemqError`] variant.
+    ///
+    /// See the [error reference](../docs/errors.md) for the complete mapping table.
     pub(crate) fn from_grpc_status(status: tonic::Status, operation: &str, channel: &str) -> Self {
         match status.code() {
             tonic::Code::Ok => Self::Fatal {

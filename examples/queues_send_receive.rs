@@ -1,4 +1,25 @@
-//! Example: Send and receive queue messages (simple API).
+//! # Queues Send and Receive
+//!
+//! Demonstrates the basic queue message pattern: send a single message to a
+//! queue channel, then receive and consume it. Messages are pulled (not pushed)
+//! and automatically acknowledged on receive.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent: message_id=<uuid>, sent_at=<timestamp>
+//! Received: id=<uuid>, body=Hello Queue!
+//! Total received: 1
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_send_receive
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 

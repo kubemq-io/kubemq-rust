@@ -1,4 +1,24 @@
-//! Example: Queue stream upstream batch send.
+//! # Queue Stream Upstream (Batch Send)
+//!
+//! Demonstrates the queue upstream stream for high-throughput batch sending.
+//! A batch of 10 messages is sent through the upstream gRPC stream in a single
+//! operation, and the batch result is checked for errors.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent batch via upstream stream
+//! Batch result: ref_id=batch-001, is_error=false, items=10
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_upstream
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 

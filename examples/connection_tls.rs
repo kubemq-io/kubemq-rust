@@ -1,4 +1,24 @@
-//! Example: Connect to KubeMQ with server-side TLS.
+//! # Connection with Server-Side TLS
+//!
+//! Demonstrates connecting to a KubeMQ broker over a TLS-encrypted channel.
+//! Only a CA certificate is required (no client certificate), verifying the
+//! server's identity without mutual authentication.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Connected with TLS. Server version: <version>
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker with TLS enabled and a valid CA certificate.
+//! Update the file path in the example to point to your CA certificate.
+//! By default connects to `localhost:50000`. Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example connection_tls
+//! ```
 use kubemq::prelude::*;
 use kubemq::TlsConfig;
 

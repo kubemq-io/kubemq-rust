@@ -2,22 +2,47 @@ use std::time::Duration;
 
 use rand::Rng;
 
-/// Jitter mode for backoff calculations.
+/// Jitter mode applied to exponential backoff calculations.
+///
+/// Jitter spreads retry attempts over time to avoid thundering-herd
+/// effects when many clients reconnect simultaneously.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JitterMode {
+    /// No jitter — backoff duration is deterministic.
     None,
+    /// Full jitter — random value in `[0, backoff]`.
     Full,
+    /// Equal jitter — random value in `[backoff/2, backoff]`.
     Equal,
 }
 
-/// Retry policy for transient operation errors.
+/// Retry policy for transient operation errors and subscription reconnection.
+///
+/// Uses exponential backoff with configurable jitter. Applied automatically
+/// by the SDK for subscription reconnection and available for manual use
+/// with [`backoff()`](Self::backoff).
+///
+/// # Defaults
+///
+/// | Field | Value |
+/// |-------|-------|
+/// | `max_retries` | 3 |
+/// | `initial_backoff` | 100ms |
+/// | `max_backoff` | 10s |
+/// | `multiplier` | 2.0 |
+/// | `jitter_mode` | [`JitterMode::Full`] |
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
+    /// Maximum number of retry attempts. 0 means unlimited retries.
     pub max_retries: u32,
+    /// Backoff duration for the first retry attempt.
     pub initial_backoff: Duration,
+    /// Upper bound for backoff duration (caps exponential growth).
     pub max_backoff: Duration,
+    /// Exponential multiplier applied per attempt (e.g., 2.0 for doubling).
     pub multiplier: f64,
+    /// Jitter strategy applied to the computed backoff.
     pub jitter_mode: JitterMode,
 }
 

@@ -1,4 +1,27 @@
-//! Example: Queue message with expiration time.
+//! # Queues Message Expiration
+//!
+//! Demonstrates queue messages with a time-to-live (TTL). The message is set
+//! to expire after 3 seconds. A peek immediately after send confirms the
+//! message exists; after waiting 4 seconds the message has expired and is no
+//! longer available.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent message: id=<uuid>, expiration_at=<timestamp>
+//! Before expiration (peek): 1 messages
+//! Waiting 4 seconds for message to expire...
+//! After expiration: 0 messages
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_expiration
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 use std::time::Duration;

@@ -1,4 +1,27 @@
-//! Example: Load-balanced event consumption using a consumer group.
+//! # Events Consumer Group
+//!
+//! Demonstrates load-balanced event consumption using a consumer group. Two
+//! subscribers join the same group on the same channel. Each event is delivered
+//! to only one consumer, distributing the workload across the group.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Consumer-1 received: id=<uuid>, body=message-0
+//! Consumer-2 received: id=<uuid>, body=message-1
+//! Consumer-1 received: id=<uuid>, body=message-2
+//! ...
+//! Sent 10 events to group 'my-consumer-group'
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_consumer_group
+//! ```
 use kubemq::prelude::*;
 use kubemq::EventBuilder;
 use std::time::Duration;

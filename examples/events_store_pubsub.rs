@@ -1,4 +1,24 @@
-//! Example: Publish and subscribe to persistent events (Events Store).
+//! # Events Store Publish/Subscribe
+//!
+//! Demonstrates persistent event pub/sub using the Events Store pattern. Unlike
+//! regular events, stored events are persisted and can be replayed. The subscriber
+//! uses `StartFromFirst` to receive all messages from the beginning of the stream.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Event store sent: id=<uuid>, sent=true
+//! Received store event: id=<uuid>, seq=1, body=Persistent message
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_store_pubsub
+//! ```
 use kubemq::prelude::*;
 use kubemq::{EventStoreBuilder, EventsStoreSubscription};
 use std::time::Duration;

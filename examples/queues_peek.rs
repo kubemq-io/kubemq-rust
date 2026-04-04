@@ -1,4 +1,25 @@
-//! Example: Peek at queue messages without consuming them.
+//! # Queues Peek
+//!
+//! Demonstrates peeking at queue messages without consuming them. Peeked
+//! messages remain in the queue and are still available for a subsequent
+//! receive call. Useful for inspecting queue contents without side effects.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Peeked: id=<uuid>, body=peek-me
+//! Peeked 1 messages (still in queue)
+//! Received 1 messages after peek
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_peek
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 

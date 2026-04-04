@@ -363,7 +363,50 @@ impl Default for QueryReplyBuilder {
 
 // Client methods for Queries
 impl KubemqClient {
-    /// Send a query and wait for response.
+    /// Sends a [`Query`] and waits for a [`QueryResponse`] from a subscriber.
+    ///
+    /// Queries are point-to-point with optional server-side caching. When a
+    /// `cache_key` is set, the server may return a cached response without
+    /// forwarding to a subscriber. Subscribers register via
+    /// [`subscribe_to_queries()`](Self::subscribe_to_queries) and reply via
+    /// [`send_query_response()`](Self::send_query_response).
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The [`Query`] to send. Build with [`Query::builder()`].
+    ///
+    /// # Returns
+    ///
+    /// A [`QueryResponse`] containing the response body and cache status.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty, contains wildcards, `timeout` is zero, or `cache_ttl` is set without `cache_key`.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    /// * [`KubemqError::Timeout`] (gRPC `DEADLINE_EXCEEDED`) — if no subscriber responds in time. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let query = Query::builder()
+    ///     .channel("inventory.lookup")
+    ///     .body(b"sku-12345".to_vec())
+    ///     .timeout(Duration::from_secs(10))
+    ///     .cache_key("sku-12345")
+    ///     .cache_ttl(Duration::from_secs(60))
+    ///     .build();
+    ///
+    /// let resp = client.send_query(query).await?;
+    /// println!("Cache hit: {}, body: {:?}", resp.cache_hit, resp.body);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_query(&self, query: Query) -> crate::Result<QueryResponse> {
         self.check_state("send_query")?;
 
@@ -430,10 +473,57 @@ impl KubemqClient {
         })
     }
 
-    /// Subscribe to queries on a channel.
+    /// Subscribes to queries on a channel.
     ///
-    /// Callbacks are async (REQ-M35). The subscription auto-reconnects on
-    /// retryable stream errors (REQ-H3).
+    /// The `on_query` callback is invoked for each received [`QueryReceive`].
+    /// The handler should process the query and send a [`QueryReply`] via
+    /// [`send_query_response()`](Self::send_query_response). The subscription
+    /// automatically reconnects on retryable stream errors with backoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel name to subscribe to. Must not contain wildcards.
+    /// * `group` - Consumer group name. Empty string for no group.
+    /// * `on_query` - Async callback invoked for each [`QueryReceive`].
+    /// * `on_error` - Optional async error callback for stream errors.
+    ///
+    /// # Returns
+    ///
+    /// A [`Subscription`] handle for cancelling the subscription.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty or contains wildcards.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: KubemqClient) -> kubemq::Result<()> {
+    /// let client_ref = client.clone();
+    /// let sub = client.subscribe_to_queries(
+    ///     "inventory.lookup",
+    ///     "",
+    ///     move |query| {
+    ///         let c = client_ref.clone();
+    ///         Box::pin(async move {
+    ///             let reply = QueryReply::builder()
+    ///                 .request_id(&query.id)
+    ///                 .response_to(&query.response_to)
+    ///                 .body(b"in-stock".to_vec())
+    ///                 .build();
+    ///             let _ = c.send_query_response(reply).await;
+    ///         })
+    ///     },
+    ///     None,
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(clippy::type_complexity)]
     pub async fn subscribe_to_queries(
         &self,
@@ -598,7 +688,36 @@ impl KubemqClient {
         ))
     }
 
-    /// Send a query response (from subscriber handler).
+    /// Sends a query response back to the sender (from a subscriber handler).
+    ///
+    /// The `request_id` and `response_to` fields must match the values from the
+    /// received [`QueryReceive`].
+    ///
+    /// # Arguments
+    ///
+    /// * `reply` - The [`QueryReply`] to send. Build with [`QueryReply::builder()`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `request_id` or `response_to` is empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient, query: &QueryReceive) -> kubemq::Result<()> {
+    /// let reply = QueryReply::builder()
+    ///     .request_id(&query.id)
+    ///     .response_to(&query.response_to)
+    ///     .body(b"result-data".to_vec())
+    ///     .build();
+    /// client.send_query_response(reply).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_query_response(&self, reply: QueryReply) -> crate::Result<()> {
         self.check_closed()?;
         validate::validate_request_id(&reply.request_id, "send_query_response")?;
@@ -638,7 +757,32 @@ impl KubemqClient {
         Ok(())
     }
 
-    /// Convenience: send query with minimal params.
+    /// Convenience method to send a query with minimal parameters.
+    ///
+    /// Equivalent to building a [`Query`] and calling [`send_query()`](Self::send_query).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Target channel name.
+    /// * `body` - Query payload bytes.
+    /// * `timeout` - Maximum time to wait for a response.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`send_query()`](Self::send_query).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let resp = client.send_query_simple("inventory", b"sku-42".to_vec(), Duration::from_secs(5)).await?;
+    /// println!("Result: {:?}", resp.body);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_query_simple(
         &self,
         channel: &str,

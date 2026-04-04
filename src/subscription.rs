@@ -3,9 +3,16 @@
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// Represents an active subscription with cancel/status support.
+/// Handle for an active event, event-store, command, or query subscription.
 ///
-/// When dropped, the subscription is automatically cancelled.
+/// Provides methods to cancel the subscription, check its status, and wait
+/// for completion. When dropped, the subscription is automatically cancelled
+/// via the internal [`CancellationToken`].
+///
+/// Obtained from [`subscribe_to_events()`](crate::KubemqClient::subscribe_to_events),
+/// [`subscribe_to_events_store()`](crate::KubemqClient::subscribe_to_events_store),
+/// [`subscribe_to_commands()`](crate::KubemqClient::subscribe_to_commands), or
+/// [`subscribe_to_queries()`](crate::KubemqClient::subscribe_to_queries).
 pub struct Subscription {
     id: String,
     cancel: CancellationToken,

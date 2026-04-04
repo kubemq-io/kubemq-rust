@@ -1,4 +1,29 @@
-//! Example: Demonstrate retry policy and state callbacks.
+//! # Reconnection and Retry Policy
+//!
+//! Demonstrates configuring a retry policy with exponential backoff and
+//! connection state callbacks. The client is configured with `max_retries=3`,
+//! `on_connected`, and `on_closed` callbacks. Events are sent in a loop to
+//! observe retry behavior if the broker becomes temporarily unavailable.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! [STATE] Connected
+//! Client state: Connected
+//! Sent heartbeat 0
+//! Sent heartbeat 1
+//! ...
+//! [STATE] Closed
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example reconnection
+//! ```
 use kubemq::prelude::*;
 use kubemq::{EventBuilder, RetryPolicy};
 use std::time::Duration;

@@ -1,4 +1,37 @@
-//! Example: All 6 Events Store subscription start position types.
+//! # Events Store — All Subscription Start Types
+//!
+//! Demonstrates all six Events Store subscription start position types:
+//! `StartNewOnly`, `StartFromFirst`, `StartFromLast`, `StartAtSequence`,
+//! `StartAtTime`, and `StartAtTimeDelta`. Each type controls where in the
+//! stored event stream the subscriber begins receiving messages.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! --- StartNewOnly ---
+//! --- StartFromFirst ---
+//!   seq=1, id=<uuid>, body=...
+//!   seq=2, id=<uuid>, body=...
+//! --- StartFromLast ---
+//!   seq=<last>, id=<uuid>, body=...
+//! --- StartAtSequence(5) ---
+//!   seq=5, id=<uuid>, body=...
+//!   seq=6, id=<uuid>, body=...
+//! --- StartAtTime ---
+//!   seq=<n>, id=<uuid>, body=...
+//! --- StartAtTimeDelta(30s) ---
+//!   seq=<n>, id=<uuid>, body=...
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker with pre-existing stored events on the
+//! `events_store.start_types` channel. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_store_all_start_types
+//! ```
 use kubemq::prelude::*;
 use kubemq::EventsStoreSubscription;
 use std::time::{Duration, SystemTime};
