@@ -1,4 +1,33 @@
-//! Example: Demonstrate error types and retry logic.
+//! # Error Handling
+//!
+//! Demonstrates the SDK's error types and how to match on them. Shows
+//! connection errors (connecting to a non-existent port), validation errors
+//! (sending to an empty channel), and error code matching with [`ErrorCode`]
+//! variants (`Validation`, `Transient`, `Timeout`, `Authentication`).
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Connection failed (expected): <error message>
+//!   Error code: Transient
+//!   Is retryable: true
+//!   Suggestion: <suggestion text>
+//! Validation error (expected):
+//!   Code: Validation
+//!   Message: <validation message>
+//!   Suggestion: <suggestion text>
+//! Got validation error
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker on port 50000 for validation error demos.
+//! The connection error demo intentionally uses a wrong port. Override with
+//! `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example error_handling
+//! ```
 use kubemq::prelude::*;
 use kubemq::{ErrorCode, EventBuilder, KubemqError};
 

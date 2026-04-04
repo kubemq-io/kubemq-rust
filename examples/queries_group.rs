@@ -1,4 +1,28 @@
-//! Example: Query handler with consumer group.
+//! # Queries with Consumer Group
+//!
+//! Demonstrates load-balanced query handling using a consumer group. Two
+//! query responders join the same group — each incoming query is routed to
+//! only one handler, and the caller receives the response from whichever
+//! handler processed it.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Handler-1 received query: <uuid>
+//! Query 0 response from: from-handler-1
+//! Handler-2 received query: <uuid>
+//! Query 1 response from: from-handler-2
+//! ...
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queries_group
+//! ```
 use kubemq::prelude::*;
 use kubemq::{QueryBuilder, QueryReplyBuilder};
 use std::time::Duration;

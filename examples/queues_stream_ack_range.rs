@@ -1,4 +1,28 @@
-//! Example: Queue stream downstream with selective ack by range.
+//! # Queue Stream Selective Ack (By Range)
+//!
+//! Demonstrates selectively acknowledging individual messages from a poll batch.
+//! Five messages are polled; only the first three are acknowledged while the
+//! remaining two are left unacknowledged (and will be redelivered).
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received 5 messages
+//! Acked message at index 0
+//! Acked message at index 1
+//! Acked message at index 2
+//! Skipping ack for message at index 3
+//! Skipping ack for message at index 4
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_ack_range
+//! ```
 use kubemq::prelude::*;
 use kubemq::{PollRequest, QueueMessageBuilder};
 

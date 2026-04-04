@@ -379,7 +379,44 @@ fn proto_to_event_store_receive(p: proto::EventReceive) -> EventStoreReceive {
 
 // Client methods for Events Store
 impl KubemqClient {
-    /// Send a persistent event to the store.
+    /// Sends a persistent [`EventStore`] to the store.
+    ///
+    /// Unlike [`send_event()`](Self::send_event), store events are persisted on
+    /// the broker and can be replayed by new subscribers using
+    /// [`subscribe_to_events_store()`](Self::subscribe_to_events_store).
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The [`EventStore`] message to send. Build with [`EventStore::builder()`].
+    ///
+    /// # Returns
+    ///
+    /// An [`EventStoreResult`] with the server-assigned ID and confirmation status.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty or contains wildcards, or body/metadata are both empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    /// * [`KubemqError::Timeout`] (gRPC `DEADLINE_EXCEEDED`) — if the operation times out. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let event = EventStore::builder()
+    ///     .channel("orders.created")
+    ///     .body(b"order-data".to_vec())
+    ///     .build();
+    ///
+    /// let result = client.send_event_store(event).await?;
+    /// println!("Stored event ID: {}", result.id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_event_store(&self, event: EventStore) -> crate::Result<EventStoreResult> {
         self.check_state("send_event_store")?;
 
@@ -436,7 +473,37 @@ impl KubemqClient {
         }
     }
 
-    /// Open a bidirectional stream for high-throughput event store publishing.
+    /// Opens a bidirectional stream for high-throughput event store publishing.
+    ///
+    /// Returns an [`EventStoreStreamHandle`] that provides a non-blocking
+    /// [`send()`](EventStoreStreamHandle::send) method. Per-message results
+    /// are delivered via [`results()`](EventStoreStreamHandle::results).
+    ///
+    /// # Returns
+    ///
+    /// An [`EventStoreStreamHandle`] for sending events and receiving confirmations.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let mut handle = client.send_event_store_stream().await?;
+    /// let event = EventStore::builder()
+    ///     .channel("orders.stream")
+    ///     .body(b"order-data".to_vec())
+    ///     .build();
+    /// handle.send(event).await?;
+    /// handle.close();
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_event_store_stream(&self) -> crate::Result<EventStoreStreamHandle> {
         self.check_state("send_event_store_stream")?;
 
@@ -543,10 +610,50 @@ impl KubemqClient {
         ))
     }
 
-    /// Subscribe to persistent events from a start position.
+    /// Subscribes to persistent events starting from the specified [`EventsStoreSubscription`] position.
     ///
-    /// Callbacks are async (REQ-M35). The subscription auto-reconnects on
-    /// retryable stream errors (REQ-H3).
+    /// The `on_event` callback is invoked for each received [`EventStoreReceive`]. The
+    /// subscription automatically reconnects on retryable stream errors with backoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel name to subscribe to. Must not contain wildcards.
+    /// * `group` - Consumer group name. Empty string for no group (fan-out).
+    /// * `start` - [`EventsStoreSubscription`] specifying where to begin reading.
+    /// * `on_event` - Async callback invoked for each [`EventStoreReceive`].
+    /// * `on_error` - Optional async error callback for stream errors.
+    ///
+    /// # Returns
+    ///
+    /// A [`Subscription`] handle for cancelling the subscription.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty or contains wildcards, or start position is invalid.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let sub = client.subscribe_to_events_store(
+    ///     "orders.created",
+    ///     "",
+    ///     EventsStoreSubscription::StartFromFirst,
+    ///     |event| Box::pin(async move {
+    ///         println!("Seq {}: {}", event.sequence, String::from_utf8_lossy(&event.body));
+    ///     }),
+    ///     None,
+    /// ).await?;
+    ///
+    /// sub.done().await;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(clippy::type_complexity)]
     pub async fn subscribe_to_events_store(
         &self,
@@ -738,7 +845,32 @@ impl KubemqClient {
         ))
     }
 
-    /// Convenience: publish event store with minimal params.
+    /// Convenience method to publish an event store message with minimal parameters.
+    ///
+    /// Equivalent to building an [`EventStore`] and calling [`send_event_store()`](Self::send_event_store).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Target channel name.
+    /// * `body` - Message payload bytes.
+    /// * `metadata` - Optional UTF-8 metadata string.
+    /// * `tags` - Optional key-value tags.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`send_event_store()`](Self::send_event_store).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let result = client.publish_event_store("orders", b"data".to_vec(), None, None).await?;
+    /// println!("Stored: {}", result.id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn publish_event_store(
         &self,
         channel: &str,

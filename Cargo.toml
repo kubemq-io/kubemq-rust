@@ -7,6 +7,7 @@ authors = ["KubeMQ Team"]
 description = "KubeMQ Rust SDK - Message broker client for events, commands, queries, and queues"
 license = "Apache-2.0"
 repository = "https://github.com/kubemq-io/kubemq-rust"
+homepage = "https://kubemq.io"
 documentation = "https://docs.rs/kubemq"
 readme = "README.md"
 keywords = ["kubemq", "messaging", "grpc", "events", "queues"]
@@ -74,4 +75,5 @@ name = "queries_bench"
 harness = false
 
 [package.metadata.docs.rs]
+all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

@@ -1,4 +1,32 @@
-//! Example: Create, list, and delete channels for all pattern types.
+//! # Channel Management
+//!
+//! Demonstrates creating, listing, and deleting channels across all five
+//! messaging pattern types: Events, Events Store, Commands, Queries, and
+//! Queues. Also shows filtered channel listing by search term.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Created events channel
+//! Created events store channel
+//! Created commands channel
+//! Created queries channel
+//! Created queues channel
+//! Events channels: <count>
+//!   name=example-events-ch, active=<bool>, last_activity=<timestamp>
+//!   ...
+//! Filtered queues channels: <count>
+//! All example channels deleted
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example channel_management
+//! ```
 use kubemq::channel_type;
 use kubemq::prelude::*;
 

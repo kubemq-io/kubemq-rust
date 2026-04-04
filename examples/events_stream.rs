@@ -1,4 +1,23 @@
-//! Example: High-throughput event streaming.
+//! # Events Stream
+//!
+//! Demonstrates high-throughput event publishing using a streaming channel.
+//! Instead of individual send calls, events are pushed through a persistent
+//! gRPC stream for lower latency. Sends 100 events and checks for stream errors.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent 100 events via stream to channel: events.stream.example
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_stream
+//! ```
 use kubemq::prelude::*;
 use kubemq::EventBuilder;
 

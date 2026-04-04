@@ -1,4 +1,30 @@
-//! Example: Queue stream downstream convenience poll.
+//! # Queue Stream Poll
+//!
+//! Demonstrates polling for queue messages using the downstream stream API.
+//! Messages are sent first, then a `PollRequest` retrieves them in a single
+//! batch with a wait timeout. After processing, all messages are acknowledged
+//! together with `ack_all()`.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Polled 5 messages:
+//!   seq=1, body=poll-msg-0
+//!   seq=2, body=poll-msg-1
+//!   seq=3, body=poll-msg-2
+//!   seq=4, body=poll-msg-3
+//!   seq=5, body=poll-msg-4
+//! All acknowledged
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_poll
+//! ```
 use kubemq::prelude::*;
 use kubemq::{PollRequest, QueueMessageBuilder};
 

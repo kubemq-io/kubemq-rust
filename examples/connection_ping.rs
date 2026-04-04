@@ -1,4 +1,26 @@
-//! Example: Connect to KubeMQ, ping the server, print server info, and close.
+//! # Connection Ping
+//!
+//! Demonstrates connecting to a KubeMQ broker, sending a ping request to
+//! verify connectivity, and printing server information (host, version,
+//! start time, and uptime).
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Server host: localhost
+//! Server version: <version>
+//! Server start time: <timestamp>
+//! Server uptime (seconds): <seconds>
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example connection_ping
+//! ```
 use kubemq::prelude::*;
 
 #[tokio::main]

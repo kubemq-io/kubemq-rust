@@ -23,7 +23,19 @@ pub trait CredentialProvider: Send + Sync {
     async fn get_token(&self) -> crate::Result<(String, Option<std::time::SystemTime>)>;
 }
 
-/// Static token provider that never expires.
+/// A [`CredentialProvider`] that returns a fixed token with no expiration.
+///
+/// Suitable for development and static-token environments. For production
+/// use cases requiring token rotation, implement [`CredentialProvider`]
+/// with an `expires_at` value to enable proactive refresh.
+///
+/// # Example
+///
+/// ```rust
+/// use kubemq::StaticTokenProvider;
+///
+/// let provider = StaticTokenProvider::new("my-secret-token");
+/// ```
 pub struct StaticTokenProvider {
     token: String,
 }
@@ -37,6 +49,7 @@ impl std::fmt::Debug for StaticTokenProvider {
 }
 
 impl StaticTokenProvider {
+    /// Create a new static token provider with the given token string.
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),

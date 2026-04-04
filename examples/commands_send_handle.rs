@@ -1,4 +1,24 @@
-//! Example: Send a command, subscribe as a responder, and respond.
+//! # Commands Send and Handle
+//!
+//! Demonstrates the command (RPC) pattern: a responder subscribes to a channel
+//! and handles incoming commands by sending back a response. The sender waits
+//! synchronously for the response within a timeout.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received command: id=<uuid>, body=do-something
+//! Command response: executed=true, error=''
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example commands_send_handle
+//! ```
 use kubemq::prelude::*;
 use kubemq::{CommandBuilder, CommandReplyBuilder};
 use std::time::Duration;

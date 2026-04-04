@@ -1,4 +1,28 @@
-//! Example: Subscribe to events with wildcard patterns.
+//! # Events Wildcard Subscription
+//!
+//! Demonstrates wildcard channel subscriptions. A single subscriber listens on
+//! `events.wildcard.*` and receives events published to any matching sub-channel
+//! (e.g., `events.wildcard.orders`, `events.wildcard.users`).
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent event to events.wildcard.orders
+//! Sent event to events.wildcard.users
+//! Sent event to events.wildcard.logs
+//! Wildcard received: channel=events.wildcard.orders, body=message for orders
+//! Wildcard received: channel=events.wildcard.users, body=message for users
+//! Wildcard received: channel=events.wildcard.logs, body=message for logs
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_wildcard
+//! ```
 use kubemq::prelude::*;
 use kubemq::EventBuilder;
 use std::time::Duration;

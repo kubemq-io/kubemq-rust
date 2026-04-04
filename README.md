@@ -7,6 +7,24 @@ The official Rust client library for [KubeMQ](https://kubemq.io) message broker.
 [![CI](https://github.com/kubemq-io/kubemq-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/kubemq-io/kubemq-rust/actions)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Configuration](#configuration)
+  - [Environment Variables](#environment-variables)
+- [Examples](#examples)
+- [Error Handling](#error-handling)
+- [Reconnection](#reconnection)
+- [TLS & Authentication](#tls--authentication)
+  - [Server-side TLS](#server-side-tls)
+  - [Mutual TLS (mTLS)](#mutual-tls-mtls)
+  - [Auth Token](#auth-token)
+- [Minimum Supported Rust Version](#minimum-supported-rust-version)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Installation
 
 ```bash
