@@ -1,4 +1,28 @@
-//! Example: Queue stream downstream -- re-queue messages to a different channel.
+//! # Queue Stream Re-queue
+//!
+//! Demonstrates re-queuing messages from one channel to another. Messages are
+//! polled from a source channel and individually re-queued to a target channel
+//! using `msg.re_queue()`. The target channel is then verified to contain the
+//! moved messages.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received 3 messages from source
+//! Re-queued message <uuid> to queues.stream.requeue.target
+//! Re-queued message <uuid> to queues.stream.requeue.target
+//! Re-queued message <uuid> to queues.stream.requeue.target
+//! Target channel has 3 messages
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_requeue
+//! ```
 use kubemq::prelude::*;
 use kubemq::{PollRequest, QueueMessageBuilder};
 

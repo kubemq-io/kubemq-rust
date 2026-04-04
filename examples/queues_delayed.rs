@@ -1,4 +1,27 @@
-//! Example: Send a queue message with a delay.
+//! # Queues Delayed Message
+//!
+//! Demonstrates sending a queue message with a delivery delay. The message is
+//! accepted by the broker but not visible to consumers until the delay period
+//! (5 seconds) elapses. An immediate receive returns nothing; after the delay
+//! the message becomes available.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent delayed message: id=<uuid>, delayed_to=<timestamp>
+//! Immediate receive (before delay): 0 messages
+//! Waiting 6 seconds for delayed message...
+//! After delay: 1 messages received
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_delayed
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 

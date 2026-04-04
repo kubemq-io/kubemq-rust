@@ -15,12 +15,21 @@ const REQUEST_CHANNEL: &str = "kubemq.cluster.internal.requests";
 /// Default timeout for channel management operations (10 seconds).
 const DEFAULT_TIMEOUT_MS: i32 = 10_000;
 
-/// Channel type constants.
+/// String constants identifying the five KubeMQ channel types.
+///
+/// Pass these to [`KubemqClient::create_channel()`],
+/// [`delete_channel()`](crate::KubemqClient::delete_channel), and
+/// [`list_channels()`](crate::KubemqClient::list_channels).
 pub mod channel_type {
+    /// Fire-and-forget Pub/Sub events.
     pub const EVENTS: &str = "events";
+    /// Persistent Pub/Sub events with replay capability.
     pub const EVENTS_STORE: &str = "events_store";
+    /// RPC command (request/response without data return).
     pub const COMMANDS: &str = "commands";
+    /// RPC query (request/response with data return and optional caching).
     pub const QUERIES: &str = "queries";
+    /// Point-to-point message queues with persistence and acknowledgement.
     pub const QUEUES: &str = "queues";
 }
 
@@ -59,25 +68,40 @@ fn validate_channel_type(channel_type: &str, operation: &str) -> Result<()> {
     Ok(())
 }
 
-/// Information about a KubeMQ channel.
+/// Information about a KubeMQ channel returned by
+/// [`KubemqClient::list_channels()`].
 #[derive(Debug, Clone)]
 pub struct ChannelInfo {
+    /// Channel name.
     pub name: String,
+    /// Channel type (one of the [`channel_type`] constants).
     pub channel_type: String,
+    /// Unix timestamp (nanoseconds) of the last message activity.
     pub last_activity: i64,
+    /// `true` if the channel currently has active producers or consumers.
     pub is_active: bool,
+    /// Incoming (producer-side) message statistics, if available.
     pub incoming: Option<ChannelStats>,
+    /// Outgoing (consumer-side) message statistics, if available.
     pub outgoing: Option<ChannelStats>,
 }
 
-/// Directional channel statistics.
+/// Directional message statistics for a channel.
+///
+/// Represents either the incoming (producer) or outgoing (consumer) side.
 #[derive(Debug, Clone, Default)]
 pub struct ChannelStats {
+    /// Total number of messages processed.
     pub messages: i64,
+    /// Total payload volume in bytes.
     pub volume: i64,
+    /// Total number of responses (for RPC channels).
     pub responses: i64,
+    /// Number of messages currently waiting for delivery.
     pub waiting: i64,
+    /// Number of messages that have expired.
     pub expired: i64,
+    /// Number of messages currently delayed.
     pub delayed: i64,
 }
 
@@ -229,9 +253,34 @@ impl KubemqClient {
         Ok(())
     }
 
-    /// Create a channel of the specified type.
+    /// Creates a channel of the specified type on the broker.
     ///
-    /// `channel_type` must be one of the constants in [`channel_type`].
+    /// See also: [`delete_channel()`](Self::delete_channel),
+    /// [`list_channels()`](Self::list_channels).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Channel name to create. Must be non-empty.
+    /// * `channel_type` - One of the constants in [`channel_type`] (`"events"`, `"events_store"`, `"commands"`, `"queries"`, `"queues"`).
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `name` is empty or `channel_type` is invalid.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Fatal`] — if the server rejects the operation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use kubemq::channels::channel_type;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// client.create_channel("orders.us", channel_type::QUEUES).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_channel(&self, name: &str, channel_type: &str) -> Result<()> {
         self.channel_mutate(
             name,
@@ -243,9 +292,31 @@ impl KubemqClient {
         .await
     }
 
-    /// Delete a channel of the specified type.
+    /// Deletes a channel of the specified type from the broker.
     ///
-    /// `channel_type` must be one of the constants in [`channel_type`].
+    /// # Arguments
+    ///
+    /// * `name` - Channel name to delete. Must be non-empty.
+    /// * `channel_type` - One of the constants in [`channel_type`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `name` is empty or `channel_type` is invalid.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Fatal`] — if the channel does not exist or the server rejects the operation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use kubemq::channels::channel_type;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// client.delete_channel("orders.us", channel_type::QUEUES).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn delete_channel(&self, name: &str, channel_type: &str) -> Result<()> {
         self.channel_mutate(
             name,
@@ -257,10 +328,41 @@ impl KubemqClient {
         .await
     }
 
-    /// List channels of the specified type, optionally filtered by a search string.
+    /// Lists channels of the specified type, optionally filtered by a search string.
     ///
-    /// `channel_type` must be one of the constants in [`channel_type`].
-    /// Pass an empty string for `search` to list all channels of the given type.
+    /// See also: [`create_channel()`](Self::create_channel),
+    /// [`delete_channel()`](Self::delete_channel).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_type` - One of the constants in [`channel_type`].
+    /// * `search` - Filter string. Empty string lists all channels of the given type.
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`ChannelInfo`] with name, type, activity, and [`ChannelStats`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel_type` is invalid.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Fatal`] — if the server response cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use kubemq::channels::channel_type;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let channels = client.list_channels(channel_type::QUEUES, "").await?;
+    /// for ch in &channels {
+    ///     println!("{} (active: {})", ch.name, ch.is_active);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list_channels(
         &self,
         channel_type: &str,
@@ -324,81 +426,81 @@ impl KubemqClient {
 
     // -- Convenience methods: Create --
 
-    /// Create an events channel with the given name.
+    /// Creates an events channel. See [`create_channel()`](Self::create_channel) for details.
     pub async fn create_events_channel(&self, name: &str) -> Result<()> {
         self.create_channel(name, channel_type::EVENTS).await
     }
 
-    /// Create an events-store channel with the given name.
+    /// Creates an events-store channel. See [`create_channel()`](Self::create_channel) for details.
     pub async fn create_events_store_channel(&self, name: &str) -> Result<()> {
         self.create_channel(name, channel_type::EVENTS_STORE).await
     }
 
-    /// Create a commands channel with the given name.
+    /// Creates a commands channel. See [`create_channel()`](Self::create_channel) for details.
     pub async fn create_commands_channel(&self, name: &str) -> Result<()> {
         self.create_channel(name, channel_type::COMMANDS).await
     }
 
-    /// Create a queries channel with the given name.
+    /// Creates a queries channel. See [`create_channel()`](Self::create_channel) for details.
     pub async fn create_queries_channel(&self, name: &str) -> Result<()> {
         self.create_channel(name, channel_type::QUERIES).await
     }
 
-    /// Create a queues channel with the given name.
+    /// Creates a queues channel. See [`create_channel()`](Self::create_channel) for details.
     pub async fn create_queues_channel(&self, name: &str) -> Result<()> {
         self.create_channel(name, channel_type::QUEUES).await
     }
 
     // -- Convenience methods: Delete --
 
-    /// Delete an events channel with the given name.
+    /// Deletes an events channel. See [`delete_channel()`](Self::delete_channel) for details.
     pub async fn delete_events_channel(&self, name: &str) -> Result<()> {
         self.delete_channel(name, channel_type::EVENTS).await
     }
 
-    /// Delete an events-store channel with the given name.
+    /// Deletes an events-store channel. See [`delete_channel()`](Self::delete_channel) for details.
     pub async fn delete_events_store_channel(&self, name: &str) -> Result<()> {
         self.delete_channel(name, channel_type::EVENTS_STORE).await
     }
 
-    /// Delete a commands channel with the given name.
+    /// Deletes a commands channel. See [`delete_channel()`](Self::delete_channel) for details.
     pub async fn delete_commands_channel(&self, name: &str) -> Result<()> {
         self.delete_channel(name, channel_type::COMMANDS).await
     }
 
-    /// Delete a queries channel with the given name.
+    /// Deletes a queries channel. See [`delete_channel()`](Self::delete_channel) for details.
     pub async fn delete_queries_channel(&self, name: &str) -> Result<()> {
         self.delete_channel(name, channel_type::QUERIES).await
     }
 
-    /// Delete a queues channel with the given name.
+    /// Deletes a queues channel. See [`delete_channel()`](Self::delete_channel) for details.
     pub async fn delete_queues_channel(&self, name: &str) -> Result<()> {
         self.delete_channel(name, channel_type::QUEUES).await
     }
 
     // -- Convenience methods: List --
 
-    /// List events channels, optionally filtered by search string.
+    /// Lists events channels. See [`list_channels()`](Self::list_channels) for details.
     pub async fn list_events_channels(&self, search: &str) -> Result<Vec<ChannelInfo>> {
         self.list_channels(channel_type::EVENTS, search).await
     }
 
-    /// List events-store channels, optionally filtered by search string.
+    /// Lists events-store channels. See [`list_channels()`](Self::list_channels) for details.
     pub async fn list_events_store_channels(&self, search: &str) -> Result<Vec<ChannelInfo>> {
         self.list_channels(channel_type::EVENTS_STORE, search).await
     }
 
-    /// List commands channels, optionally filtered by search string.
+    /// Lists commands channels. See [`list_channels()`](Self::list_channels) for details.
     pub async fn list_commands_channels(&self, search: &str) -> Result<Vec<ChannelInfo>> {
         self.list_channels(channel_type::COMMANDS, search).await
     }
 
-    /// List queries channels, optionally filtered by search string.
+    /// Lists queries channels. See [`list_channels()`](Self::list_channels) for details.
     pub async fn list_queries_channels(&self, search: &str) -> Result<Vec<ChannelInfo>> {
         self.list_channels(channel_type::QUERIES, search).await
     }
 
-    /// List queues channels, optionally filtered by search string.
+    /// Lists queues channels. See [`list_channels()`](Self::list_channels) for details.
     pub async fn list_queues_channels(&self, search: &str) -> Result<Vec<ChannelInfo>> {
         self.list_channels(channel_type::QUEUES, search).await
     }

@@ -1,4 +1,27 @@
-//! Example: Events Store subscription with consumer group.
+//! # Events Store Consumer Group
+//!
+//! Demonstrates load-balanced consumption of persistent events using a consumer
+//! group. Two subscribers in the same group share the workload — each stored
+//! event is delivered to only one consumer in the group.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Consumer-1: seq=1, body=group-msg-0
+//! Consumer-2: seq=2, body=group-msg-1
+//! Consumer-1: seq=3, body=group-msg-2
+//! ...
+//! Sent 10 events to store group 'store-consumer-group'
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_store_consumer_group
+//! ```
 use kubemq::prelude::*;
 use kubemq::{EventStoreBuilder, EventsStoreSubscription};
 use std::time::Duration;

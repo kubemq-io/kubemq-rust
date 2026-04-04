@@ -391,7 +391,45 @@ fn proto_to_send_result(r: proto::SendQueueMessageResult) -> QueueSendResult {
 
 // Client methods for Queues (Simple API)
 impl KubemqClient {
-    /// Send a single message to a queue.
+    /// Sends a single [`QueueMessage`] to a queue.
+    ///
+    /// Queue messages are persisted and delivered to exactly one consumer.
+    /// For batch sending, use [`send_queue_messages()`](Self::send_queue_messages).
+    /// For streaming, use the queue upstream stream API.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - The [`QueueMessage`] to send. Build with [`QueueMessage::builder()`].
+    ///
+    /// # Returns
+    ///
+    /// A [`QueueSendResult`] with the server-assigned ID, timestamps, and confirmation.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty, contains wildcards, or policy values are negative.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    /// * [`KubemqError::Timeout`] (gRPC `DEADLINE_EXCEEDED`) — if the operation times out. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let msg = QueueMessage::builder()
+    ///     .channel("tasks")
+    ///     .body(b"process-order-42".to_vec())
+    ///     .expiration_seconds(300)
+    ///     .build();
+    ///
+    /// let result = client.send_queue_message(msg).await?;
+    /// println!("Sent: {}", result.message_id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_queue_message(&self, msg: QueueMessage) -> crate::Result<QueueSendResult> {
         self.check_state("send_queue_message")?;
 
@@ -436,7 +474,40 @@ impl KubemqClient {
         Ok(proto_to_send_result(response.into_inner()))
     }
 
-    /// Send multiple messages to a queue in a batch.
+    /// Sends multiple messages to a queue in a single batch operation.
+    ///
+    /// Each message in the batch is validated independently. If any message fails
+    /// validation, the entire batch is rejected before sending.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - A vector of [`QueueMessage`] instances to send.
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`QueueSendResult`], one per message in the same order.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if any message has an empty/wildcard channel or invalid policy.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let messages = vec![
+    ///     QueueMessage::builder().channel("tasks").body(b"task-1".to_vec()).build(),
+    ///     QueueMessage::builder().channel("tasks").body(b"task-2".to_vec()).build(),
+    /// ];
+    /// let results = client.send_queue_messages(messages).await?;
+    /// println!("Sent {} messages", results.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_queue_messages(
         &self,
         messages: Vec<QueueMessage>,
@@ -491,7 +562,42 @@ impl KubemqClient {
             .collect())
     }
 
-    /// Receive messages from a queue (simple API).
+    /// Receives messages from a queue using the simple (non-streaming) API.
+    ///
+    /// Messages are acknowledged immediately upon delivery unless `is_peek` is `true`,
+    /// in which case messages remain in the queue for future consumption.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Queue channel to receive from.
+    /// * `max_messages` - Maximum number of messages to receive. Must be > 0.
+    /// * `wait_time_seconds` - Maximum seconds to wait for messages. Must be > 0.
+    /// * `is_peek` - When `true`, messages are read without consuming them.
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`QueueMessage`] instances with server-assigned [`QueueMessageAttributes`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty, contains wildcards, or `max_messages`/`wait_time_seconds` are invalid.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let messages = client.receive_queue_messages("tasks", 10, 5, false).await?;
+    /// for msg in &messages {
+    ///     println!("Received: {}", String::from_utf8_lossy(&msg.body));
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn receive_queue_messages(
         &self,
         channel: &str,
@@ -543,7 +649,39 @@ impl KubemqClient {
             .collect())
     }
 
-    /// Acknowledge all messages in a queue.
+    /// Acknowledges all pending messages in a queue channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - An [`AckAllQueueMessagesRequest`] specifying the channel and timeout.
+    ///
+    /// # Returns
+    ///
+    /// An [`AckAllQueueMessagesResponse`] with the count of acknowledged messages.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let req = AckAllQueueMessagesRequest {
+    ///     request_id: String::new(),
+    ///     client_id: String::new(),
+    ///     channel: "tasks".to_string(),
+    ///     wait_time_seconds: 5,
+    /// };
+    /// let resp = client.ack_all_queue_messages(&req).await?;
+    /// println!("Acknowledged {} messages", resp.affected_messages);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn ack_all_queue_messages(
         &self,
         req: &AckAllQueueMessagesRequest,
@@ -586,7 +724,31 @@ impl KubemqClient {
         })
     }
 
-    /// Convenience: send queue message with minimal params.
+    /// Convenience method to send a queue message with minimal parameters.
+    ///
+    /// Equivalent to building a [`QueueMessage`] and calling
+    /// [`send_queue_message()`](Self::send_queue_message).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Target queue channel name.
+    /// * `body` - Message payload bytes.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`send_queue_message()`](Self::send_queue_message).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let result = client.send_queue_message_simple("tasks", b"task-data".to_vec()).await?;
+    /// println!("Sent: {}", result.message_id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_queue_message_simple(
         &self,
         channel: &str,

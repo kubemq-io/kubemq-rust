@@ -332,7 +332,47 @@ impl Default for CommandReplyBuilder {
 
 // Client methods for Commands
 impl KubemqClient {
-    /// Send a command and wait for response.
+    /// Sends a [`Command`] and waits for a [`CommandResponse`] from a subscriber.
+    ///
+    /// Commands are point-to-point: exactly one subscriber handles the command
+    /// and returns a [`CommandResponse`], or the `timeout` expires.
+    /// Subscribers register via [`subscribe_to_commands()`](Self::subscribe_to_commands)
+    /// and reply via [`send_command_response()`](Self::send_command_response).
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The [`Command`] to send. Build with [`Command::builder()`].
+    ///
+    /// # Returns
+    ///
+    /// A [`CommandResponse`] indicating whether the command was executed.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty, contains wildcards, or `timeout` is zero.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    /// * [`KubemqError::Timeout`] (gRPC `DEADLINE_EXCEEDED`) — if no subscriber responds in time. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let cmd = Command::builder()
+    ///     .channel("device.reboot")
+    ///     .body(b"device-42".to_vec())
+    ///     .timeout(Duration::from_secs(10))
+    ///     .build();
+    ///
+    /// let resp = client.send_command(cmd).await?;
+    /// println!("Executed: {}", resp.executed);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_command(&self, command: Command) -> crate::Result<CommandResponse> {
         self.check_state("send_command")?;
 
@@ -387,10 +427,56 @@ impl KubemqClient {
         })
     }
 
-    /// Subscribe to commands on a channel.
+    /// Subscribes to commands on a channel.
     ///
-    /// Callbacks are async (REQ-M35). The subscription auto-reconnects on
-    /// retryable stream errors (REQ-H3).
+    /// The `on_command` callback is invoked for each received [`CommandReceive`].
+    /// The handler should process the command and send a [`CommandReply`] via
+    /// [`send_command_response()`](Self::send_command_response). The subscription
+    /// automatically reconnects on retryable stream errors with backoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Channel name to subscribe to. Must not contain wildcards.
+    /// * `group` - Consumer group name. Empty string for no group.
+    /// * `on_command` - Async callback invoked for each [`CommandReceive`].
+    /// * `on_error` - Optional async error callback for stream errors.
+    ///
+    /// # Returns
+    ///
+    /// A [`Subscription`] handle for cancelling the subscription.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `channel` is empty or contains wildcards.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    /// * [`KubemqError::Authentication`] (gRPC `UNAUTHENTICATED`) — if the auth token is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: KubemqClient) -> kubemq::Result<()> {
+    /// let client_ref = client.clone();
+    /// let sub = client.subscribe_to_commands(
+    ///     "device.reboot",
+    ///     "",
+    ///     move |cmd| {
+    ///         let c = client_ref.clone();
+    ///         Box::pin(async move {
+    ///             let reply = CommandReply::builder()
+    ///                 .request_id(&cmd.id)
+    ///                 .response_to(&cmd.response_to)
+    ///                 .build();
+    ///             let _ = c.send_command_response(reply).await;
+    ///         })
+    ///     },
+    ///     None,
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(clippy::type_complexity)]
     pub async fn subscribe_to_commands(
         &self,
@@ -556,7 +642,35 @@ impl KubemqClient {
         ))
     }
 
-    /// Send a command response (from subscriber handler).
+    /// Sends a command response back to the sender (from a subscriber handler).
+    ///
+    /// The `request_id` and `response_to` fields must match the values from the
+    /// received [`CommandReceive`].
+    ///
+    /// # Arguments
+    ///
+    /// * `reply` - The [`CommandReply`] to send. Build with [`CommandReply::builder()`].
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Validation`] — if `request_id` or `response_to` is empty.
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient, cmd: &CommandReceive) -> kubemq::Result<()> {
+    /// let reply = CommandReply::builder()
+    ///     .request_id(&cmd.id)
+    ///     .response_to(&cmd.response_to)
+    ///     .build();
+    /// client.send_command_response(reply).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_command_response(&self, reply: CommandReply) -> crate::Result<()> {
         self.check_closed()?;
         validate::validate_request_id(&reply.request_id, "send_command_response")?;
@@ -596,7 +710,32 @@ impl KubemqClient {
         Ok(())
     }
 
-    /// Convenience: send command with minimal params.
+    /// Convenience method to send a command with minimal parameters.
+    ///
+    /// Equivalent to building a [`Command`] and calling [`send_command()`](Self::send_command).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel` - Target channel name.
+    /// * `body` - Command payload bytes.
+    /// * `timeout` - Maximum time to wait for a response.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`send_command()`](Self::send_command).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let resp = client.send_command_simple("device.reboot", b"42".to_vec(), Duration::from_secs(5)).await?;
+    /// println!("Executed: {}", resp.executed);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_command_simple(
         &self,
         channel: &str,

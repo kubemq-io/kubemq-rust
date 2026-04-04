@@ -1,4 +1,24 @@
-//! Example: Connect to KubeMQ with mutual TLS (mTLS).
+//! # Connection with Mutual TLS (mTLS)
+//!
+//! Demonstrates connecting to a KubeMQ broker using mutual TLS authentication.
+//! Both server and client certificates are configured via [`TlsConfig`], requiring
+//! a CA certificate, client certificate, and client private key.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Connected with mTLS. Server version: <version>
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker with mTLS enabled and valid certificate files.
+//! Update the file paths in the example to point to your certificates.
+//! By default connects to `localhost:50000`. Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example connection_mtls
+//! ```
 use kubemq::prelude::*;
 use kubemq::TlsConfig;
 

@@ -1,4 +1,26 @@
-//! Example: Batch send and receive queue messages.
+//! # Queues Batch Send and Receive
+//!
+//! Demonstrates sending and receiving queue messages in batches. Ten messages
+//! are sent in a single batch call, then all are received together. Batch
+//! operations reduce round-trips compared to individual sends.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Batch sent: id=<uuid>, is_error=false
+//! Batch sent: id=<uuid>, is_error=false
+//! ...
+//! Received 10 messages from batch
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_batch
+//! ```
 use kubemq::prelude::*;
 use kubemq::QueueMessageBuilder;
 

@@ -1,4 +1,24 @@
-//! Example: Send a query, subscribe as a responder, and respond with data.
+//! # Queries Send and Handle
+//!
+//! Demonstrates the query (request/reply) pattern: a responder subscribes to a
+//! channel and returns data in response to queries. Unlike commands, query
+//! responses carry a body payload back to the caller.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received query: id=<uuid>, body=what-is-the-answer
+//! Query response: executed=true, body=query-response-data, cache_hit=false
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queries_send_handle
+//! ```
 use kubemq::prelude::*;
 use kubemq::{QueryBuilder, QueryReplyBuilder};
 use std::time::Duration;

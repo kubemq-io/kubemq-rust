@@ -100,6 +100,74 @@
 
 **Solution:** The generated proto code is committed. You should not need `protoc`. If you see proto errors, ensure the `src/proto/kubemq.rs` file exists and is not corrupted.
 
+## gRPC Status Code Mapping
+
+The SDK maps gRPC status codes to `KubemqError` variants via `from_grpc_status()`. This table shows the complete mapping:
+
+| gRPC Status Code | `KubemqError` Variant | `ErrorCode` | Retryable | Suggestion |
+|---|---|---|---|---|
+| `OK` | `Fatal` | `Fatal` | No | This is a bug in the SDK. Please report it. |
+| `CANCELLED` | `Cancellation` | `Cancellation` | No | Operation was cancelled. Check if the client is closing. |
+| `UNKNOWN` | `Transient` | `Transient` | Yes | Retry the operation. If the problem persists, check server health. |
+| `INVALID_ARGUMENT` | `Validation` | `Validation` | No | Check the request parameters (channel, body, metadata). |
+| `DEADLINE_EXCEEDED` | `Timeout` | `Timeout` | Yes | Increase the timeout or check server connectivity and firewall rules. |
+| `NOT_FOUND` | `NotFound` | `NotFound` | No | The channel or queue does not exist. Create it first. |
+| `ALREADY_EXISTS` | `Validation` | `Validation` | No | Check the request parameters (channel, body, metadata). |
+| `PERMISSION_DENIED` | `Authorization` | `Authorization` | No | Verify the client has permissions for this channel. |
+| `RESOURCE_EXHAUSTED` | `Throttling` | `Throttling` | Yes | Reduce request rate or increase server capacity. |
+| `FAILED_PRECONDITION` | `Validation` | `Validation` | No | Check the request parameters (channel, body, metadata). |
+| `ABORTED` | `Transient` | `Transient` | Yes | Retry the operation. If the problem persists, check server health. |
+| `OUT_OF_RANGE` | `Validation` | `Validation` | No | Check the request parameters (channel, body, metadata). |
+| `UNIMPLEMENTED` | `Fatal` | `Fatal` | No | This is an unrecoverable server error. Contact support. |
+| `INTERNAL` | `Fatal` | `Fatal` | No | This is an unrecoverable server error. Contact support. |
+| `UNAVAILABLE` | `Transient` | `Transient` | Yes | Retry the operation. If the problem persists, check server health. |
+| `DATA_LOSS` | `Fatal` | `Fatal` | No | Data loss detected. Check server logs and data integrity. |
+| `UNAUTHENTICATED` | `Authentication` | `Authentication` | No | Check your auth token. It may have expired. |
+
+Use `error.is_retryable()` to check whether an operation can be retried, and `error.suggestion()` for recovery guidance.
+
+## Debug Logging
+
+The SDK uses the [`tracing`](https://docs.rs/tracing) crate for structured diagnostic logging. To see SDK log output, add a `tracing-subscriber` to your application:
+
+```toml
+[dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+```
+
+```rust
+fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    // ... your application code ...
+}
+```
+
+Control log verbosity with the `RUST_LOG` environment variable:
+
+| Level | `RUST_LOG` value | What is logged |
+|---|---|---|
+| Error | `RUST_LOG=kubemq=error` | Unrecoverable failures, panicked callbacks |
+| Warn | `RUST_LOG=kubemq=warn` | Client dropped without `close()`, retryable failures |
+| Info | `RUST_LOG=kubemq=info` | Connection state changes, subscription lifecycle |
+| Debug | `RUST_LOG=kubemq=debug` | gRPC call details, retry attempts, reconnection events |
+| Trace | `RUST_LOG=kubemq=trace` | Full message payloads, proto serialization details |
+
+**Examples:**
+
+```bash
+# Show only errors from the SDK
+RUST_LOG=kubemq=error cargo run --example events_pubsub
+
+# Show debug-level output for the SDK, info for everything else
+RUST_LOG=info,kubemq=debug cargo run --example events_pubsub
+
+# Show all trace output (very verbose)
+RUST_LOG=kubemq=trace cargo run --example events_pubsub
+```
+
 ## Getting Help
 
 - Open an issue on [GitHub](https://github.com/kubemq-io/kubemq-rust/issues)

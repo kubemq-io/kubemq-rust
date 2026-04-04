@@ -1,4 +1,24 @@
-//! Example: Queue stream downstream -- reject (nack) messages.
+//! # Queue Stream Nack (Reject)
+//!
+//! Demonstrates rejecting (nacking) queue messages. After polling, all messages
+//! are rejected with `nack_all()`, returning them to the queue for redelivery
+//! to another consumer. Useful for signaling processing failure.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Received 3 messages
+//! All messages nacked (returned to queue)
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example queues_stream_nack
+//! ```
 use kubemq::prelude::*;
 use kubemq::{PollRequest, QueueMessageBuilder};
 

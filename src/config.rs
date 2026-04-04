@@ -10,10 +10,18 @@ use crate::retry::RetryPolicy;
 use crate::tls::TlsConfig;
 use crate::transport::grpc::GrpcTransport;
 
-/// Async callback that takes a parameter and returns a future.
+/// Async callback signature for subscription message handlers.
+///
+/// Receives a message of type `T` and returns a pinned future.
+/// Used by [`KubemqClient::subscribe_to_events()`](crate::KubemqClient::subscribe_to_events),
+/// [`KubemqClient::subscribe_to_commands()`](crate::KubemqClient::subscribe_to_commands),
+/// [`KubemqClient::subscribe_to_queries()`](crate::KubemqClient::subscribe_to_queries), and
+/// [`KubemqClient::subscribe_to_events_store()`](crate::KubemqClient::subscribe_to_events_store).
 pub type AsyncCallback<T> =
     Box<dyn Fn(T) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
-/// Async callback with no parameter.
+/// Async notification callback for lifecycle events.
+///
+/// Used by [`ClientConfigBuilder::on_connected()`] and [`ClientConfigBuilder::on_closed()`].
 pub type AsyncNotifyCallback =
     Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
@@ -26,89 +34,116 @@ const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_KEEPALIVE_TIME: Duration = Duration::from_secs(10);
 const DEFAULT_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Client configuration. Immutable after build.
+/// Client configuration for connecting to a KubeMQ broker.
+///
+/// Immutable after construction via [`ClientConfigBuilder::build()`].
+/// Access configuration values through the getter methods below.
 #[non_exhaustive]
 pub struct ClientConfig {
-    // Connection
+    /// Broker hostname (default: `"localhost"`).
     pub(crate) host: String,
+    /// Broker port number (default: `50000`).
     pub(crate) port: u16,
+    /// Client identifier sent with every request.
     pub(crate) client_id: String,
+    /// Authentication token for gRPC `authorization` metadata.
     pub(crate) auth_token: Option<String>,
 
-    // TLS
+    /// TLS configuration for secure connections.
     pub(crate) tls_config: Option<TlsConfig>,
 
-    // Connection behavior
+    /// Timeout for establishing the initial connection.
     pub(crate) connection_timeout: Duration,
+    /// Whether to verify connectivity during build.
     pub(crate) check_connection: bool,
+    /// Timeout for draining tasks during graceful shutdown.
     pub(crate) drain_timeout: Duration,
 
-    // Keepalive
+    /// HTTP/2 keepalive ping interval.
     pub(crate) keepalive_time: Duration,
+    /// HTTP/2 keepalive ping timeout.
     pub(crate) keepalive_timeout: Duration,
+    /// Whether keepalive pings are sent without active streams.
     pub(crate) permit_keepalive_without_stream: bool,
 
-    // Message limits
+    /// Maximum inbound message size in bytes.
     pub(crate) max_receive_message_size: usize,
+    /// Maximum outbound message size in bytes.
     pub(crate) max_send_message_size: usize,
 
-    // Retry
+    /// Retry policy for automatic reconnection.
     pub(crate) retry_policy: RetryPolicy,
 
-    // RPC
+    /// RPC timeout for request-response operations.
     pub(crate) rpc_timeout: Duration,
 
-    // State callbacks
+    /// Callback invoked on connection (re)establishment.
     pub(crate) on_connected: Option<AsyncNotifyCallback>,
+    /// Callback invoked on connection close.
     pub(crate) on_closed: Option<AsyncNotifyCallback>,
 
-    // Auth
+    /// Dynamic credential provider for authentication.
     pub(crate) credential_provider: Option<Arc<dyn CredentialProvider>>,
 }
 
 impl ClientConfig {
+    /// Returns the broker hostname.
     pub fn host(&self) -> &str {
         &self.host
     }
+    /// Returns the broker port number.
     pub fn port(&self) -> u16 {
         self.port
     }
+    /// Returns the client identifier sent with every request.
     pub fn client_id(&self) -> &str {
         &self.client_id
     }
+    /// Returns the configured auth token, if any.
     pub fn auth_token(&self) -> Option<&str> {
         self.auth_token.as_deref()
     }
+    /// Returns the TLS configuration, if any.
     pub fn tls_config(&self) -> Option<&TlsConfig> {
         self.tls_config.as_ref()
     }
+    /// Returns the connection timeout duration.
     pub fn connection_timeout(&self) -> Duration {
         self.connection_timeout
     }
+    /// Returns whether the builder verifies connectivity at build time.
     pub fn check_connection(&self) -> bool {
         self.check_connection
     }
+    /// Returns the drain timeout for graceful shutdown.
     pub fn drain_timeout(&self) -> Duration {
         self.drain_timeout
     }
+    /// Returns the HTTP/2 keepalive interval.
     pub fn keepalive_time(&self) -> Duration {
         self.keepalive_time
     }
+    /// Returns the HTTP/2 keepalive timeout.
     pub fn keepalive_timeout(&self) -> Duration {
         self.keepalive_timeout
     }
+    /// Returns whether keepalive pings are sent without active streams.
     pub fn permit_keepalive_without_stream(&self) -> bool {
         self.permit_keepalive_without_stream
     }
+    /// Returns the maximum inbound message size in bytes.
     pub fn max_receive_message_size(&self) -> usize {
         self.max_receive_message_size
     }
+    /// Returns the maximum outbound message size in bytes.
     pub fn max_send_message_size(&self) -> usize {
         self.max_send_message_size
     }
+    /// Returns the RPC timeout for request-response operations.
     pub fn rpc_timeout(&self) -> Duration {
         self.rpc_timeout
     }
+    /// Returns the retry policy for reconnection.
     pub fn retry_policy(&self) -> &RetryPolicy {
         &self.retry_policy
     }
@@ -139,7 +174,11 @@ impl std::fmt::Debug for ClientConfig {
     }
 }
 
-/// Builder for creating a `ClientConfig` and connecting a `KubemqClient`.
+/// Builder for creating a [`ClientConfig`] and connecting a [`KubemqClient`](crate::KubemqClient).
+///
+/// Use [`KubemqClient::builder()`](crate::KubemqClient::builder) to create a new builder.
+///
+/// Configuration precedence: Builder method > Environment variable > Compiled default.
 pub struct ClientConfigBuilder {
     host: Option<String>,
     port: Option<u16>,
@@ -185,86 +224,141 @@ impl ClientConfigBuilder {
         }
     }
 
+    /// Sets the broker hostname.
+    ///
+    /// Defaults to `"localhost"`. If not set and `KUBEMQ_ADDRESS` is defined,
+    /// the host is parsed from that environment variable.
     pub fn host(mut self, host: impl Into<String>) -> Self {
         self.host = Some(host.into());
         self
     }
 
+    /// Sets the broker port number.
+    ///
+    /// Defaults to `50000`. If not set and `KUBEMQ_ADDRESS` is defined,
+    /// the port is parsed from that environment variable.
     pub fn port(mut self, port: u16) -> Self {
         self.port = Some(port);
         self
     }
 
+    /// Sets the client identifier sent with every request.
+    ///
+    /// If not set, a random UUID is generated.
     pub fn client_id(mut self, id: impl Into<String>) -> Self {
         self.client_id = Some(id.into());
         self
     }
 
+    /// Sets the authentication token for the connection.
+    ///
+    /// The token is sent as gRPC `authorization` metadata on every request.
     pub fn auth_token(mut self, token: impl Into<String>) -> Self {
         self.auth_token = Some(token.into());
         self
     }
 
+    /// Sets the TLS configuration for secure connections.
+    ///
+    /// See [`TlsConfig`] for available options (server TLS and mutual TLS).
     pub fn tls_config(mut self, config: TlsConfig) -> Self {
         self.tls_config = Some(config);
         self
     }
 
+    /// Sets the timeout for establishing the initial connection.
+    ///
+    /// Defaults to 10 seconds.
     pub fn connection_timeout(mut self, timeout: Duration) -> Self {
         self.connection_timeout = Some(timeout);
         self
     }
 
+    /// Enables connectivity verification during [`build()`](Self::build).
+    ///
+    /// When `true`, the builder pings the broker to verify the connection
+    /// before returning the client. Defaults to `false`.
     pub fn check_connection(mut self, check: bool) -> Self {
         self.check_connection = Some(check);
         self
     }
 
+    /// Sets the drain timeout for graceful shutdown.
+    ///
+    /// During [`KubemqClient::close()`](crate::KubemqClient::close), background tasks
+    /// are given this duration to complete. Defaults to 5 seconds.
     pub fn drain_timeout(mut self, timeout: Duration) -> Self {
         self.drain_timeout = Some(timeout);
         self
     }
 
+    /// Sets the HTTP/2 keepalive interval.
+    ///
+    /// Must be at least 5 seconds. Defaults to 10 seconds.
     pub fn keepalive_time(mut self, interval: Duration) -> Self {
         self.keepalive_time = Some(interval);
         self
     }
 
+    /// Sets the HTTP/2 keepalive timeout.
+    ///
+    /// If the peer does not respond to a keepalive ping within this duration,
+    /// the connection is considered dead. Defaults to 5 seconds.
     pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
         self.keepalive_timeout = Some(timeout);
         self
     }
 
+    /// Sets whether keepalive pings are sent when there are no active streams.
+    ///
+    /// Defaults to `true`.
     pub fn permit_keepalive_without_stream(mut self, permit: bool) -> Self {
         self.permit_keepalive_without_stream = Some(permit);
         self
     }
 
+    /// Sets the maximum inbound message size in bytes.
+    ///
+    /// Defaults to 4 MB (4,194,304 bytes).
     pub fn max_receive_message_size(mut self, size: usize) -> Self {
         self.max_receive_message_size = Some(size);
         self
     }
 
+    /// Sets the maximum outbound message size in bytes.
+    ///
+    /// Defaults to 100 MB (104,857,600 bytes).
     pub fn max_send_message_size(mut self, size: usize) -> Self {
         self.max_send_message_size = Some(size);
         self
     }
 
+    /// Sets the retry policy for automatic reconnection.
+    ///
+    /// See [`RetryPolicy`] for configuring backoff and jitter.
     pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = Some(policy);
         self
     }
 
+    /// Sets the timeout for RPC (request-response) operations.
+    ///
+    /// Applies to Commands and Queries. Defaults to 60 seconds.
     pub fn rpc_timeout(mut self, timeout: Duration) -> Self {
         self.rpc_timeout = Some(timeout);
         self
     }
 
+    /// Sets a dynamic credential provider for authentication.
+    ///
+    /// The provider's [`get_token()`](crate::CredentialProvider::get_token) method is called
+    /// before each gRPC request to obtain the current token.
     pub fn credential_provider(mut self, provider: impl CredentialProvider + 'static) -> Self {
         self.credential_provider = Some(Arc::new(provider));
         self
     }
 
+    /// Registers a callback invoked when the client connects (or reconnects).
     pub fn on_connected<F, Fut>(mut self, f: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -274,6 +368,7 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Registers a callback invoked when the client connection is closed.
     pub fn on_closed<F, Fut>(mut self, f: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -283,9 +378,30 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Build and connect the client.
+    /// Builds the [`KubemqClient`](crate::KubemqClient), establishing a connection to the broker.
     ///
-    /// Precedence: Builder method > Environment variable > Compiled default.
+    /// Configuration precedence: Builder method > Environment variable > Compiled default.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example() -> kubemq::Result<()> {
+    /// let client = KubemqClient::builder()
+    ///     .host("localhost")
+    ///     .port(50000)
+    ///     .client_id("my-service")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::Transient`](crate::KubemqError::Transient) — if the broker is unreachable (when `check_connection` is enabled).
+    /// * [`KubemqError::Validation`](crate::KubemqError::Validation) — if required configuration is invalid.
     pub async fn build(self) -> crate::Result<KubemqClient> {
         // 1. Resolve env var fallbacks
         let host = self

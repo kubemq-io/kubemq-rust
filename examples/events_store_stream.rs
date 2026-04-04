@@ -1,4 +1,23 @@
-//! Example: High-throughput event store streaming.
+//! # Events Store Stream
+//!
+//! Demonstrates high-throughput persistent event publishing using a streaming
+//! channel. Events are pushed through a gRPC stream for lower latency and
+//! each is persisted to the store. Results are checked for send failures.
+//!
+//! ## Expected Output
+//!
+//! ```text
+//! Sent 100 events via store stream to channel: events_store.stream.example
+//! ```
+//!
+//! ## Running
+//!
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
+//! Override with `KUBEMQ_ADDRESS`:
+//!
+//! ```bash
+//! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_store_stream
+//! ```
 use kubemq::prelude::*;
 use kubemq::EventStoreBuilder;
 

@@ -19,6 +19,15 @@ struct Inner {
 
 /// Thread-safe KubeMQ client. Clone is cheap (Arc-based).
 ///
+/// This is the primary entry point for all messaging operations. Use
+/// [`builder()`](Self::builder) to create a configured client, then call
+/// pattern-specific methods to send [`Event`](crate::Event)s,
+/// [`EventStore`](crate::EventStore)s, [`Command`](crate::Command)s,
+/// [`Query`](crate::Query) requests, or [`QueueMessage`](crate::QueueMessage)s.
+///
+/// All operations return [`Result<T>`](crate::Result) with structured
+/// [`KubemqError`](crate::KubemqError) variants.
+///
 /// # Shutdown
 ///
 /// Call [`close()`](Self::close) before dropping to ensure graceful shutdown.
@@ -30,7 +39,25 @@ pub struct KubemqClient {
 }
 
 impl KubemqClient {
-    /// Create a builder for configuring the client.
+    /// Creates a [`ClientConfigBuilder`] for configuring and connecting the client.
+    ///
+    /// See [`ClientConfig`] for the full set of configurable options.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example() -> kubemq::Result<()> {
+    /// let client = KubemqClient::builder()
+    ///     .host("localhost")
+    ///     .port(50000)
+    ///     .client_id("my-service")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::new()
     }
@@ -57,26 +84,87 @@ impl KubemqClient {
         self.inner.cancel.child_token()
     }
 
-    /// Get the current connection state.
+    /// Returns the current [`ConnectionState`].
+    ///
+    /// This method is synchronous — no `.await` needed.
+    ///
+    /// # Returns
+    ///
+    /// The current [`ConnectionState`]: [`Idle`](ConnectionState::Idle),
+    /// [`Ready`](ConnectionState::Ready), or [`Closed`](ConnectionState::Closed).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # fn example(client: &KubemqClient) {
+    /// match client.state() {
+    ///     ConnectionState::Ready => println!("Connected"),
+    ///     ConnectionState::Idle => println!("Not yet connected"),
+    ///     ConnectionState::Closed => println!("Closed"),
+    /// }
+    /// # }
+    /// ```
     pub fn state(&self) -> ConnectionState {
         self.inner.transport.state()
     }
 
-    /// Ping the server for health check. Bypasses authentication.
+    /// Pings the KubeMQ broker and returns [`ServerInfo`].
+    ///
+    /// This health-check bypasses authentication — it can be called even when
+    /// the auth token is not configured.
+    ///
+    /// # Returns
+    ///
+    /// [`ServerInfo`] containing the server's hostname, version, start time,
+    /// and uptime.
+    ///
+    /// # Errors
+    ///
+    /// * [`KubemqError::ClientClosed`] — if the client has been closed.
+    /// * [`KubemqError::Transient`] (gRPC `UNAVAILABLE`) — if the server is unreachable. Retryable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: &KubemqClient) -> kubemq::Result<()> {
+    /// let info = client.ping().await?;
+    /// println!("Server: {} v{}", info.host, info.version);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn ping(&self) -> Result<ServerInfo> {
         self.check_closed()?;
         self.inner.transport.ping().await
     }
 
-    /// Close the client, cancelling all child tasks and releasing the gRPC channel.
+    /// Closes the client, cancelling all child tasks and releasing the gRPC channel.
+    ///
+    /// After calling `close()`, all subsequent operations will return
+    /// [`KubemqError::ClientClosed`]. Active subscriptions are cancelled.
     ///
     /// This is best-effort: child tasks are cancelled via CancellationToken and given
     /// `drain_timeout` to complete, but there are no JoinHandles tracked. Tasks that
     /// don't observe cancellation within the timeout may still be running when the
     /// transport is closed, resulting in gRPC errors in flight. This is an accepted
-    /// trade-off for v1 -- the drain_timeout is configurable via ClientConfigBuilder.
+    /// trade-off for v1 — the drain_timeout is configurable via ClientConfigBuilder.
     ///
-    /// Idempotent -- safe to call multiple times.
+    /// Idempotent — safe to call multiple times. Returns `Ok(())` if already closed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # async fn example(client: KubemqClient) -> kubemq::Result<()> {
+    /// client.close().await?;
+    /// assert_eq!(client.state(), ConnectionState::Closed);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn close(&self) -> Result<()> {
         if self.inner.closed.swap(true, Ordering::AcqRel) {
             return Ok(()); // Already closed
@@ -121,7 +209,18 @@ impl KubemqClient {
         self.check_closed()
     }
 
-    /// Get a reference to the client configuration.
+    /// Returns a reference to the client's [`ClientConfig`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use kubemq::prelude::*;
+    ///
+    /// # fn example(client: &KubemqClient) {
+    /// let config = client.config();
+    /// println!("Connected to {}:{}", config.host(), config.port());
+    /// # }
+    /// ```
     pub fn config(&self) -> &ClientConfig {
         self.inner.transport.config()
     }
