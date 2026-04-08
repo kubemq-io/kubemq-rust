@@ -72,6 +72,11 @@ impl EventsProducer {
 
             interval.tick().await;
 
+            // Guard: don't send if stopped while waiting for the tick.
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
+
             let body = payload::generate(self.message_size, self.sent.load(Ordering::SeqCst));
             let event = EventBuilder::new()
                 .channel(&self.channel)

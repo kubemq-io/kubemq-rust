@@ -58,6 +58,11 @@ impl QueueSimpleProducer {
 
             interval.tick().await;
 
+            // Guard: don't send if stopped while waiting for the tick.
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
+
             let mut batch = Vec::with_capacity(batch_size);
             for _ in 0..batch_size {
                 let body = payload::generate(self.message_size, seq);
