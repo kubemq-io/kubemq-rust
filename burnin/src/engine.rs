@@ -109,6 +109,11 @@ impl ChannelWorkerSet {
         }
         // Subscriptions are dropped when the ChannelWorkerSet is dropped
     }
+
+    /// Drain and return all consumer JoinHandles so they can be awaited.
+    pub fn drain_consumer_handles(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
+        self.consumer_handles.drain(..).collect()
+    }
 }
 
 pub struct PatternGroup {
@@ -150,6 +155,11 @@ impl PatternGroup {
         for w in &self.workers {
             w.stop_consumers();
         }
+    }
+
+    /// Drain and return all consumer JoinHandles from every channel worker.
+    pub fn drain_consumer_handles(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
+        self.workers.iter_mut().flat_map(|w| w.drain_consumer_handles()).collect()
     }
 
     pub fn snapshot(&self) -> PatternSnapshot {
@@ -324,6 +334,10 @@ impl Engine {
                 if let Some(cancel) = &inner.run_cancel {
                     cancel.cancel();
                 }
+                Ok(())
+            }
+            RunState::Idle | RunState::Stopping | RunState::Stopped | RunState::Error => {
+                // Already stopping, stopped, or idle — idempotent success
                 Ok(())
             }
             other => Err(format!("cannot stop run in state {}", other)),
@@ -883,26 +897,45 @@ async fn shutdown_workers(
     cfg: &BurnInConfig,
     client: &kubemq::KubemqClient,
 ) {
-    // T3: Capture snapshot, stop producers
-    let mut snapshots = HashMap::new();
+    // T3: Stop producers and record the stop time for elapsed/throughput calculation.
+    // Do NOT snapshot here — consumers are still draining and `received` will keep rising.
     for (pname, pg) in &inner.pattern_groups {
-        snapshots.insert(pname.clone(), pg.snapshot());
         pg.stop_producers();
         tracing::info!("Producers stopped for pattern {}", pname);
     }
-    inner.producer_stop_snapshot = Some(snapshots);
     inner.producers_stopped_at = Some(Instant::now());
 
-    // Drain
+    // Drain — consumers keep receiving messages already in-flight.
     let drain = Duration::from_secs(cfg.shutdown.drain_timeout_seconds);
     tracing::info!("Draining for {:?}", drain);
     tokio::time::sleep(drain).await;
 
-    // Stop consumers
+    // Signal consumers to stop (sets the running flag to false).
     for (pname, pg) in &inner.pattern_groups {
         pg.stop_consumers();
         tracing::info!("Consumers stopped for pattern {}", pname);
     }
+
+    // Drain consumer task handles — await each one so we know every in-flight poll()
+    // has completed and incremented `received` before we snapshot.
+    // Use a 30s timeout per handle to avoid hanging forever if a task is stuck.
+    let mut all_handles: Vec<tokio::task::JoinHandle<()>> = inner
+        .pattern_groups
+        .values_mut()
+        .flat_map(|pg| pg.drain_consumer_handles())
+        .collect();
+    tracing::info!("Awaiting {} consumer tasks to finish", all_handles.len());
+    for handle in all_handles.drain(..) {
+        let _ = tokio::time::timeout(Duration::from_secs(30), handle).await;
+    }
+    tracing::info!("All consumer tasks finished");
+
+    // Snapshot after all consumer tasks have exited — `received` is now final.
+    let mut snapshots = HashMap::new();
+    for (pname, pg) in &inner.pattern_groups {
+        snapshots.insert(pname.clone(), pg.snapshot());
+    }
+    inner.producer_stop_snapshot = Some(snapshots);
 
     // T4: Generate report
     let summary = build_summary(inner, cfg);

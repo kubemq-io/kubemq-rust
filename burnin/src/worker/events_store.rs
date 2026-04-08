@@ -55,6 +55,7 @@ impl EventsStoreProducer {
             }
 
             interval.tick().await;
+            if !self.running.load(Ordering::SeqCst) { break; }
 
             let body = payload::generate(self.message_size, self.sent.load(Ordering::SeqCst));
             let event = EventStoreBuilder::new()

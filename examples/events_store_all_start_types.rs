@@ -8,15 +8,17 @@
 //! ## Expected Output
 //!
 //! ```text
+//! Pre-seeded 10 events on events_store.start_types
 //! --- StartNewOnly ---
+//!   seq=11, id=<uuid>, body=new-only event
 //! --- StartFromFirst ---
-//!   seq=1, id=<uuid>, body=...
-//!   seq=2, id=<uuid>, body=...
+//!   seq=1, id=<uuid>, body=seed-0
+//!   ...
 //! --- StartFromLast ---
 //!   seq=<last>, id=<uuid>, body=...
 //! --- StartAtSequence(5) ---
 //!   seq=5, id=<uuid>, body=...
-//!   seq=6, id=<uuid>, body=...
+//!   ...
 //! --- StartAtTime ---
 //!   seq=<n>, id=<uuid>, body=...
 //! --- StartAtTimeDelta(30s) ---
@@ -25,15 +27,14 @@
 //!
 //! ## Running
 //!
-//! Requires a running KubeMQ broker with pre-existing stored events on the
-//! `events_store.start_types` channel. By default connects to `localhost:50000`.
+//! Requires a running KubeMQ broker. By default connects to `localhost:50000`.
 //! Override with `KUBEMQ_ADDRESS`:
 //!
 //! ```bash
 //! KUBEMQ_ADDRESS=my-host:50000 cargo run --example events_store_all_start_types
 //! ```
 use kubemq::prelude::*;
-use kubemq::EventsStoreSubscription;
+use kubemq::{EventStoreBuilder, EventsStoreSubscription};
 use std::time::{Duration, SystemTime};
 
 #[tokio::main]
@@ -56,21 +57,51 @@ async fn main() -> kubemq::Result<()> {
         })
     };
 
-    // 1. StartNewOnly -- only new messages after subscribing
+    // Pre-seed the channel with 10 events so start-position subscriptions have
+    // history to replay. StartFromFirst/Last/Sequence/Time all need prior events.
+    for i in 0..10 {
+        let event = EventStoreBuilder::new()
+            .channel(channel)
+            .body(format!("seed-{}", i).into_bytes())
+            .build();
+        client.send_event_store(event).await?;
+    }
+    println!("Pre-seeded 10 events on {}", channel);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // 1. StartNewOnly — only new messages after subscribing.
+    //    subscribe_to_events_store with StartNewOnly blocks until the first new
+    //    event arrives, so we run it concurrently with a send using tokio::join!.
     println!("--- StartNewOnly ---");
-    let sub1 = client
-        .subscribe_to_events_store(
+    let send_client = KubemqClient::builder()
+        .host("localhost")
+        .port(50000)
+        .build()
+        .await?;
+    let new_event = EventStoreBuilder::new()
+        .channel(channel)
+        .body(b"new-only event".to_vec())
+        .build();
+    let (sub1_result, _) = tokio::join!(
+        client.subscribe_to_events_store(
             channel,
             "",
             EventsStoreSubscription::StartNewOnly,
             handler,
             None,
-        )
-        .await?;
+        ),
+        async {
+            // Small delay to ensure subscription is registered before sending.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            send_client.send_event_store(new_event).await
+        }
+    );
+    let sub1 = sub1_result?;
     tokio::time::sleep(Duration::from_secs(1)).await;
     sub1.unsubscribe().await;
+    send_client.close().await?;
 
-    // 2. StartFromFirst -- replay from the very first message
+    // 2. StartFromFirst — replay from the very first message
     println!("--- StartFromFirst ---");
     let sub2 = client
         .subscribe_to_events_store(
@@ -84,7 +115,7 @@ async fn main() -> kubemq::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
     sub2.unsubscribe().await;
 
-    // 3. StartFromLast -- only the last stored message
+    // 3. StartFromLast — only the last stored message
     println!("--- StartFromLast ---");
     let sub3 = client
         .subscribe_to_events_store(
@@ -98,7 +129,7 @@ async fn main() -> kubemq::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
     sub3.unsubscribe().await;
 
-    // 4. StartAtSequence -- from a specific sequence number
+    // 4. StartAtSequence — from a specific sequence number
     println!("--- StartAtSequence(5) ---");
     let sub4 = client
         .subscribe_to_events_store(
@@ -112,7 +143,7 @@ async fn main() -> kubemq::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
     sub4.unsubscribe().await;
 
-    // 5. StartAtTime -- from a specific point in time
+    // 5. StartAtTime — from a specific point in time
     println!("--- StartAtTime ---");
     let start_time = SystemTime::now() - Duration::from_secs(3600); // 1 hour ago
     let sub5 = client
@@ -127,7 +158,7 @@ async fn main() -> kubemq::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
     sub5.unsubscribe().await;
 
-    // 6. StartAtTimeDelta -- relative time offset
+    // 6. StartAtTimeDelta — relative time offset
     println!("--- StartAtTimeDelta(30s) ---");
     let sub6 = client
         .subscribe_to_events_store(
