@@ -68,6 +68,7 @@ impl QueriesSender {
             }
 
             interval.tick().await;
+            if !self.running.load(Ordering::SeqCst) { break; }
 
             let body = payload::generate(self.message_size, seq);
             let query = QueryBuilder::new()
